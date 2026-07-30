@@ -310,6 +310,9 @@ namespace TinyOPDS
             {
                 var batchResult = await Library.AddBatchAsync(booksToProcess);
 
+                if (Settings.Default.NormalizeLibrary && batchResult.DuplicateFiles != null)
+                    NormalizationCollector.AddDuplicates(batchResult.DuplicateFiles);
+
                 if (batchResult.Duplicates > 0 || batchResult.Errors > 0)
                 {
                     int booksToSubtract = batchResult.Duplicates + batchResult.Errors;
@@ -546,23 +549,13 @@ namespace TinyOPDS
             }
         }
 
-        private void ScannerButton_Click(object sender, EventArgs e)
+        private async void ScannerButton_Click(object sender, EventArgs e)
         {
             if (scanner.Status != FileScannerStatus.SCANNING)
             {
-                scanner.OnBookFound += Scanner_OnBookFound;
-                scanner.OnInvalidBook += (_, __) => { invalidFiles++; };
-                scanner.OnFileSkipped += (object _sender, FileSkippedEventArgs _e) =>
-                {
-                    skippedFiles = _e.Count;
-                    UpdateInfo();
-                };
-                scanner.OnScanCompleted += async (_, __) =>
-                {
-                    await FlushRemainingBooksAsync();
-                    UpdateInfo(true);
-                    Log.WriteLine("Directory scanner completed");
-                };
+                if (Settings.Default.NormalizeLibrary) NormalizationCollector.Reset();
+
+                AttachScannerHandlers();
 
                 if (Settings.Default.ClearDBOnScan)
                 {
@@ -590,6 +583,30 @@ namespace TinyOPDS
                 fb2Count = epubCount = skippedFiles = invalidFiles = dups = 0;
                 scanStartTime = DateTime.Now;
                 startTime.Text = scanStartTime.ToString(@"HH\:mm\:ss");
+                // --- Структурная нормализация библиотеки ДО индексации ---
+                if (Settings.Default.NormalizeLibrary)
+                {
+                    // Пауза наблюдателя: Normalize сам создаёт .zip и удаляет .fb2/.epub.
+                    // Если watcher включён, он среагирует на ПРАВКИ САМОГО нормализатора → гонка.
+                    bool watcherWasEnabled = watcher != null && watcher.IsEnabled;
+                    if (watcherWasEnabled) watcher.IsEnabled = false;
+
+                    scannerButton.Enabled = false;
+                    status.Text = Localizer.Text("Normalizing library...");
+
+                    string normPath = libraryPath.Text.SanitizePathName();
+                    var normResult = await Task.Run(() =>
+                        LibraryNormalizer.Normalize(normPath, Settings.Default.KeepOriginals));
+
+                    Log.WriteLine("LibraryNormalizer: split={0}, extracted={1}, packed={2}, errors={3}",
+                        normResult.ArchivesSplit, normResult.BooksExtracted,
+                        normResult.BooksPacked, normResult.Errors);
+
+                    scannerButton.Enabled = true;
+                    // Возвращаем watcher в прежнее состояние. Файлы, созданные во время паузы,
+                    // не «переиграются» — их подхватит полный скан ниже.
+                    if (watcherWasEnabled) watcher.IsEnabled = true;
+                }
                 scanner.Start(libraryPath.Text.SanitizePathName());
                 scannerButton.Text = Localizer.Text("Stop scanning");
 
@@ -598,7 +615,7 @@ namespace TinyOPDS
             else
             {
                 scanner.Stop();
-                Task.Run(async () =>
+                _ = Task.Run(async () =>
                 {
                     await FlushRemainingBooksAsync();
                     BeginInvoke((MethodInvoker)delegate
@@ -610,7 +627,49 @@ namespace TinyOPDS
                 });
             }
         }
+        /// <summary>
+        /// Идемпотентная подписка на события сканера.
+        /// Каждый -= гасит возможную предыдущую подписку, поэтому
+        /// повторные нажатия кнопки не размножают обработчики.
+        /// </summary>
+        private void AttachScannerHandlers()
+        {
+            scanner.OnBookFound -= Scanner_OnBookFound;
+            scanner.OnInvalidBook -= Scanner_OnInvalidBook;
+            scanner.OnFileSkipped -= Scanner_OnFileSkipped;
+            scanner.OnScanCompleted -= Scanner_OnScanCompleted;
 
+            scanner.OnBookFound += Scanner_OnBookFound;
+            scanner.OnInvalidBook += Scanner_OnInvalidBook;
+            scanner.OnFileSkipped += Scanner_OnFileSkipped;
+            scanner.OnScanCompleted += Scanner_OnScanCompleted;
+        }
+
+        private void Scanner_OnInvalidBook(object sender, InvalidBookEventArgs e)
+        {
+            invalidFiles++;
+            if (Settings.Default.NormalizeLibrary) NormalizationCollector.AddBad(e.BookName);
+        }
+
+        private void Scanner_OnFileSkipped(object sender, FileSkippedEventArgs e)
+        {
+            skippedFiles = e.Count;
+            UpdateInfo();
+        }
+
+        private async void Scanner_OnScanCompleted(object sender, EventArgs e)
+        {
+            await FlushRemainingBooksAsync();
+
+            if (Settings.Default.NormalizeLibrary)
+            {
+                var mv = NormalizationCollector.MoveAll(Library.LibraryPath);
+                Log.WriteLine("Normalization: moved bad={0}, dup={1}", mv.BadMoved, mv.DupMoved);
+            }
+
+            UpdateInfo(true);
+            Log.WriteLine("Directory scanner completed");
+        }
         void Scanner_OnBookFound(object sender, BookFoundEventArgs e)
         {
             AddBookToBatch(e.Book);

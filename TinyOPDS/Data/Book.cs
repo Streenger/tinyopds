@@ -155,7 +155,35 @@ namespace TinyOPDS.Data
         public List<string> Translators { get; set; }
         public List<string> Genres { get; set; }
         public BookType BookType { get { return Path.GetExtension(FilePath).ToLower().Contains("epub") ? BookType.EPUB : BookType.FB2; } }
-        public bool IsValid { get { return !string.IsNullOrEmpty(Title) && Title.IsValidUTF() && Authors.Count > 0 && Genres.Count > 0; } }
+        // Диагностика: логируем причину невалидности один раз на экземпляр,
+        // чтобы не засорять лог при повторных обращениях к свойству.
+        private bool invalidReasonLogged;
+
+        public bool IsValid
+        {
+            get
+            {
+                bool titleOk = !string.IsNullOrEmpty(Title);
+                bool utfOk = titleOk && Title.IsValidUTF();
+                bool authorsOk = Authors != null && Authors.Count > 0;
+                bool genresOk = Genres != null && Genres.Count > 0;
+
+                if (titleOk && utfOk && authorsOk && genresOk) return true;
+
+                if (!invalidReasonLogged)
+                {
+                    invalidReasonLogged = true;
+                    Log.WriteLine(LogLevel.Warning,
+                        "Book.IsValid=false: title={0}, utf={1}, authors={2}, genres={3}, name=\"{4}\"",
+                        titleOk ? "ok" : "EMPTY",
+                        utfOk ? "ok" : "BAD",
+                        authorsOk ? Authors.Count.ToString() : "NONE",
+                        genresOk ? Genres.Count.ToString() : "NONE",
+                        FileName);
+                }
+                return false;
+            }
+        }
         public DateTime AddedDate { get; set; }
         public DateTime? LastDownloadDate { get; set; }
 

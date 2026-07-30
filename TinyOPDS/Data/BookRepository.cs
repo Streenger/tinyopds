@@ -143,19 +143,49 @@ namespace TinyOPDS.Data
         }
 
         /// <summary>
-        /// Validate genre tag against database
+        /// Проверяет тег жанра и при необходимости приводит к канонической форме.
+        /// В справочнике FB2 разделитель только "_", поэтому дефис - всегда искажение.
+        /// Возвращает true, если тег (возможно после нормализации) есть в справочнике.
+        /// </summary>
+        private bool TryResolveGenreTag(string tag, out string resolved)
+        {
+            resolved = null;
+            if (string.IsNullOrWhiteSpace(tag)) return false;
+
+            // Если кэш пуст - попытаться перезагрузить
+            if (validGenreTags.Count == 0) LoadValidGenreTags();
+
+            // 1. Как есть
+            if (validGenreTags.Contains(tag)) { resolved = tag; return true; }
+
+            // 2. Регистр и пробелы
+            string candidate = tag.Trim().ToLowerInvariant();
+            if (candidate.Length == 0) return false;
+            if (validGenreTags.Contains(candidate)) { resolved = candidate; return true; }
+
+            // 3. Дефис -> подчёркивание, схлопывание дублей
+            if (candidate.IndexOf('-') >= 0)
+            {
+                string dashed = candidate.Replace('-', '_');
+                while (dashed.Contains("__")) dashed = dashed.Replace("__", "_");
+                dashed = dashed.Trim('_');
+
+                if (dashed.Length > 0 && validGenreTags.Contains(dashed))
+                {
+                    resolved = dashed;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Проверка тега без нормализации (для внешних вызовов)
         /// </summary>
         private bool IsValidGenreTag(string tag)
         {
-            if (string.IsNullOrEmpty(tag)) return false;
-
-            // If cache is empty, try to reload
-            if (validGenreTags.Count == 0)
-            {
-                LoadValidGenreTags();
-            }
-
-            return validGenreTags.Contains(tag);
+            return TryResolveGenreTag(tag, out _);
         }
 
         /// <summary>
@@ -175,7 +205,9 @@ namespace TinyOPDS.Data
             public List<string> ErrorMessages { get; set; } = new List<string>();
             public List<string> InvalidGenreTags { get; set; } = new List<string>();
             public List<string> ReplacedBooks { get; set; } = new List<string>();
+            public List<string> DuplicateFiles { get; set; } = new List<string>();
             public int UncertainDuplicatesAdded { get; set; } = 0;
+            public int NormalizedGenres { get; set; }
 
             public bool IsSuccess => Added > 0 || Duplicates > 0 || Replaced > 0;
         }
@@ -293,18 +325,27 @@ namespace TinyOPDS.Data
                         DatabaseManager.CreateParameter("@AuthorName", authorName));
                 }
 
-                // Add genres with validation
+                // Add genres with validation and normalization
                 int validGenreCount = 0;
+                var addedGenres = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var genreTag in book.Genres)
                 {
-                    if (IsValidGenreTag(genreTag))
+                    string resolved;
+                    if (TryResolveGenreTag(genreTag, out resolved))
                     {
+                        // после нормализации могли получиться два одинаковых тега
+                        if (!addedGenres.Add(resolved)) continue;
+
                         db.ExecuteNonQueryInTransaction(DatabaseSchema.InsertBookGenre, transaction,
                             DatabaseManager.CreateParameter("@BookID", book.ID),
-                            DatabaseManager.CreateParameter("@GenreTag", genreTag));
+                            DatabaseManager.CreateParameter("@GenreTag", resolved));
                         validGenreCount++;
+
+                        if (!string.Equals(resolved, genreTag, StringComparison.Ordinal))
+                            Log.WriteLine(LogLevel.Info, "Genre tag normalized '{0}' -> '{1}' for book {2}",
+                                genreTag, resolved, book.FileName);
                     }
-                    else
+                    else if (!string.IsNullOrWhiteSpace(genreTag))
                     {
                         Log.WriteLine(LogLevel.Warning, "Invalid genre tag '{0}' for book {1}, skipping",
                             genreTag, book.FileName);
@@ -576,6 +617,13 @@ namespace TinyOPDS.Data
                                 AddToBatchIndices(book, batchByDocumentID, batchByContentHash, batchByDuplicateKey);
                                 booksToAdd.Add(book);
                             }
+                            else
+                            {
+                                // NEW: книга-дубль, НЕ добавленная в библиотеку -> кандидат на перенос в libmeta/dup.
+                                // Сохраняем относительный путь (Book.FileName). Реальное перемещение — на шаге 7.
+                                if (!string.IsNullOrEmpty(book.FileName))
+                                    result.DuplicateFiles.Add(book.FileName);
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -642,22 +690,29 @@ namespace TinyOPDS.Data
                                         DatabaseManager.CreateParameter("@AuthorName", authorName));
                                 }
 
-                                // Insert genres with validation
+                                // Insert genres with validation and normalization
+                                var addedGenres = new HashSet<string>(StringComparer.Ordinal);
                                 foreach (var genreTag in book.Genres)
                                 {
-                                    if (IsValidGenreTag(genreTag))
+                                    string resolved;
+                                    if (TryResolveGenreTag(genreTag, out resolved))
                                     {
+                                        if (!addedGenres.Add(resolved)) continue;
+
                                         db.ExecuteNonQueryInTransaction(DatabaseSchema.InsertBookGenre, transaction,
                                             DatabaseManager.CreateParameter("@BookID", book.ID),
-                                            DatabaseManager.CreateParameter("@GenreTag", genreTag));
+                                            DatabaseManager.CreateParameter("@GenreTag", resolved));
+
+                                        if (!string.Equals(resolved, genreTag, StringComparison.Ordinal))
+                                            result.NormalizedGenres++;
                                     }
                                     else
                                     {
                                         result.InvalidGenresSkipped++;
-                                        if (!result.InvalidGenreTags.Contains(genreTag))
-                                        {
-                                            result.InvalidGenreTags.Add(genreTag);
-                                        }
+                                        string shown = string.IsNullOrWhiteSpace(genreTag)
+                                            ? "(empty)" : genreTag;
+                                        if (!result.InvalidGenreTags.Contains(shown))
+                                            result.InvalidGenreTags.Add(shown);
                                     }
                                 }
 
@@ -718,7 +773,11 @@ namespace TinyOPDS.Data
                             Log.WriteLine(LogLevel.Warning, "Batch insert: {0} invalid genre tags skipped. Tags: {1}",
                                 result.InvalidGenresSkipped, string.Join(", ", result.InvalidGenreTags));
                         }
-
+                        if (result.NormalizedGenres > 0)
+                        {
+                            Log.WriteLine(LogLevel.Info, "Batch insert: {0} genre tags normalized",
+                                result.NormalizedGenres);
+                        }
                         if (result.Replaced > 0)
                         {
                             Log.WriteLine(LogLevel.Info, "Batch insert: {0} books replaced with newer versions", result.Replaced);

@@ -67,8 +67,23 @@
     <Compile Include="..\TinyOPDS\Converters\MobiNcxBuilder.cs">
       <Link>Converters\MobiNcxBuilder.cs</Link>
     </Compile>
+    <Compile Include="..\TinyOPDS\Data\Fb2Repair.cs">
+      <Link>Fb2Repair.cs</Link>
+    </Compile>
+    <Compile Include="..\TinyOPDS\Data\Fb2Sanitizer.cs">
+      <Link>Fb2Sanitizer.cs</Link>
+    </Compile>
+    <Compile Include="..\TinyOPDS\LibraryMeta.cs">
+      <Link>LibraryMeta.cs</Link>
+    </Compile>
+    <Compile Include="..\TinyOPDS\LibraryNormalizer.cs">
+      <Link>LibraryNormalizer.cs</Link>
+    </Compile>
     <Compile Include="..\TinyOPDS\Misc\Pluralizer.cs">
       <Link>Misc\Pluralizer.cs</Link>
+    </Compile>
+    <Compile Include="..\TinyOPDS\NormalizationCollector.cs">
+      <Link>NormalizationCollector.cs</Link>
     </Compile>
     <Compile Include="Program.cs">
       <SubType>Component</SubType>

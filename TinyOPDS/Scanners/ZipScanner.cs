@@ -57,7 +57,7 @@ namespace TinyOPDS.Scanner
             Status = FileScannerStatus.SCANNING;
             try
             {
-                using (var zipArchive = ZipFile.OpenRead(ZipFileName))
+                using (var zipArchive = ZipFile.Open(ZipFileName, ZipArchiveMode.Read, LibraryNormalizer.Latin1))
                 {
                     foreach (var entry in zipArchive.Entries)
                     {
@@ -65,13 +65,15 @@ namespace TinyOPDS.Scanner
 
                         if (!string.IsNullOrEmpty(entry.FullName))
                         {
-                            string entryFileName = entry.FullName;
+                            // Имя записи восстанавливается из сырых байтов (CP866/CP1251/UTF-8).
+                            // Latin1 при чтении гарантирует, что байты дойдут без искажений.
+                            string entryFileName = LibraryNormalizer.FixEntryName(entry.FullName);
 
                             // Process accepted files
                             try
                             {
                                 Book book = null;
-                                string ext = Path.GetExtension(entry.FullName).ToLower();
+                                string ext = Path.GetExtension(entryFileName).ToLower();
 
                                 if (Library.Contains(ZipFileName.Substring(Library.LibraryPath.Length + 1) + "@" + entryFileName))
                                 {

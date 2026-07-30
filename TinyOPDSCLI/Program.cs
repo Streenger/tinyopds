@@ -674,6 +674,9 @@ namespace TinyOPDSCLI
                 // Process batch asynchronously to avoid blocking
                 var batchResult = await Library.AddBatchAsync(booksToProcess);
 
+                if (Settings.Default.NormalizeLibrary && batchResult.DuplicateFiles != null)
+                    NormalizationCollector.AddDuplicates(batchResult.DuplicateFiles);
+
                 // Update counters based on actual results
                 if (batchResult.Duplicates > 0 || batchResult.Errors > 0)
                 {
@@ -1002,8 +1005,16 @@ namespace TinyOPDSCLI
             Library.Load();
 
             scanner = new FileScanner();
+
+            if (Settings.Default.NormalizeLibrary) NormalizationCollector.Reset();
+
             scanner.OnBookFound += Scanner_OnBookFound;
-            scanner.OnInvalidBook += (_, __) => { invalidFiles++; };
+            scanner.OnInvalidBook += (object _s, InvalidBookEventArgs _e) =>
+            {
+                invalidFiles++;
+                if (Settings.Default.NormalizeLibrary) NormalizationCollector.AddBad(_e.BookName);
+            };
+            
             scanner.OnFileSkipped += (object _sender, FileSkippedEventArgs _e) =>
             {
                 skippedFiles = _e.Count;
@@ -1011,8 +1022,13 @@ namespace TinyOPDSCLI
             };
             scanner.OnScanCompleted += async (_, __) =>
             {
-                // Flush any remaining books at scan completion
                 await FlushRemainingBooksAsync();
+
+                if (Settings.Default.NormalizeLibrary)
+                {
+                    var mv = NormalizationCollector.MoveAll(Library.LibraryPath);
+                    Log.WriteLine("Normalization: moved bad={0}, dup={1}", mv.BadMoved, mv.DupMoved);
+                }
                 UpdateInfo();
 
                 Log.WriteLine("Directory scanner completed");
@@ -1036,6 +1052,20 @@ namespace TinyOPDSCLI
 
             fb2Count = epubCount = skippedFiles = invalidFiles = dups = 0;
             scanStartTime = DateTime.Now;
+            // --- Структурная нормализация библиотеки ДО индексации ---
+            if (Settings.Default.NormalizeLibrary)
+            {
+                Console.WriteLine("Normalizing library, please wait...");
+                var normResult = await Task.Run(() =>
+                    LibraryNormalizer.Normalize(Library.LibraryPath, Settings.Default.KeepOriginals));
+
+                Log.WriteLine("LibraryNormalizer: split={0}, extracted={1}, packed={2}, errors={3}",
+                    normResult.ArchivesSplit, normResult.BooksExtracted,
+                    normResult.BooksPacked, normResult.Errors);
+                Console.WriteLine("Normalization done: split={0}, extracted={1}, packed={2}, errors={3}",
+                    normResult.ArchivesSplit, normResult.BooksExtracted,
+                    normResult.BooksPacked, normResult.Errors);
+            }
             scanner.Start(Library.LibraryPath);
             Console.WriteLine("Scanning directory {0}", Library.LibraryPath);
             Log.WriteLine("Directory scanner started with batch size: {0}", batchSize);

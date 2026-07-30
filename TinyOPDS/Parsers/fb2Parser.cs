@@ -117,78 +117,158 @@ namespace TinyOPDS.Parsers
             }
         }
 
-        private XElement ReadDescriptionBlock(Stream stream, string fileName)
+        private XElement ReadDescriptionBlock(
+            Stream stream,
+            string fileName)
         {
             try
             {
-                const int chunkSize = 1024 * 8;
-                var buffer = new byte[chunkSize];
-                var sb = new StringBuilder();
-                bool foundDescription = false;
-
-                // Reset stream position
-                if (stream.CanSeek)
+                if (stream == null || !stream.CanRead)
                 {
-                    stream.Position = 0;
-                }
+                    Log.WriteLine(
+                        LogLevel.Warning,
+                        "FB2 stream is null or unreadable: {0}",
+                        fileName);
 
-                // Detect encoding from first few bytes
-                Encoding encoding = Encoding.UTF8;
-                byte[] encodingBuffer = new byte[1024];
-                int encBytes = stream.Read(encodingBuffer, 0, Math.Min(1024, (int)stream.Length));
-                if (encBytes > 0)
-                {
-                    string encodingTest = Encoding.UTF8.GetString(encodingBuffer, 0, encBytes);
-                    encoding = DetectEncoding(encodingTest);
-                }
-
-                // Reset to beginning
-                stream.Position = 0;
-
-                string content = string.Empty;
-
-                // Read chunks with correct encoding
-                while (true)
-                {
-                    int bytesRead = stream.Read(buffer, 0, chunkSize);
-                    if (bytesRead == 0) break;
-
-                    string chunk = encoding.GetString(buffer, 0, bytesRead);
-                    sb.Append(chunk);
-
-                    // Check if we have complete description
-                    content = sb.ToString();
-                    int descEnd = content.IndexOf("</description>", StringComparison.OrdinalIgnoreCase);
-                    if (descEnd >= 0)
-                    {
-                        foundDescription = true;
-                        // Extract only up to </description>
-                        content = content.Substring(0, descEnd + 14);
-                        break;
-                    }
-
-                    // Safety check - don't read more than 64KB for description
-                    if (sb.Length > 1024 * 64)
-                    {
-                        Log.WriteLine(LogLevel.Warning, "Description block too large in file: {0}", fileName);
-                        break;
-                    }
-                }
-
-                if (!foundDescription)
-                {
-                    Log.WriteLine(LogLevel.Warning, "No description block found in file: {0}", fileName);
                     return null;
                 }
 
-                // Fix XML encoding issues
+                if (!stream.CanSeek)
+                {
+                    Log.WriteLine(
+                        LogLevel.Warning,
+                        "FB2 stream does not support seeking: {0}",
+                        fileName);
+
+                    return null;
+                }
+
+                stream.Position = 0;
+
+                Encoding encoding = DetectStreamEncoding(stream);
+
+                stream.Position = 0;
+
+                const int charBufferSize = 8192;
+
+                // Защита от повреждённого файла, в котором отсутствует
+                // закрывающий тег description. Это уже не прежний лимит 64 КБ.
+                const int maxDescriptionLength = 16 * 1024 * 1024;
+
+                const string closingTag = "</description>";
+
+                var contentBuilder = new StringBuilder();
+                var charBuffer = new char[charBufferSize];
+
+                bool descriptionFound = false;
+
+                using (var reader = new StreamReader(
+                    stream,
+                    encoding,
+                    true,
+                    charBufferSize,
+                    true))
+                {
+                    while (true)
+                    {
+                        int charsRead = reader.Read(
+                            charBuffer,
+                            0,
+                            charBuffer.Length);
+
+                        if (charsRead <= 0)
+                            break;
+
+                        contentBuilder.Append(
+                            charBuffer,
+                            0,
+                            charsRead);
+
+                        int descriptionEnd = contentBuilder
+                            .ToString()
+                            .IndexOf(
+                                closingTag,
+                                StringComparison.OrdinalIgnoreCase);
+
+                        if (descriptionEnd >= 0)
+                        {
+                            int requiredLength =
+                                descriptionEnd + closingTag.Length;
+
+                            if (contentBuilder.Length > requiredLength)
+                            {
+                                contentBuilder.Length = requiredLength;
+                            }
+
+                            descriptionFound = true;
+                            break;
+                        }
+
+                        if (contentBuilder.Length > maxDescriptionLength)
+                        {
+                            Log.WriteLine(
+                                LogLevel.Warning,
+                                "Description block exceeds safety limit " +
+                                "of 16 MB in file: {0}",
+                                fileName);
+
+                            return null;
+                        }
+                    }
+                }
+
+                if (!descriptionFound)
+                {
+                    Log.WriteLine(
+                        LogLevel.Warning,
+                        "No complete description block found in file: {0}",
+                        fileName);
+
+                    return null;
+                }
+
+                string content = contentBuilder.ToString();
+
                 string xmlContent = FixXmlEncoding(content);
-                var doc = XDocument.Parse(xmlContent + "</FictionBook>");
-                return doc.Root?.Element(fb2Ns + "description");
+
+                XDocument document = XDocument.Parse(
+                    xmlContent + "</FictionBook>",
+                    LoadOptions.PreserveWhitespace);
+
+                if (document.Root == null)
+                {
+                    Log.WriteLine(
+                        LogLevel.Warning,
+                        "FB2 root element is missing in file: {0}",
+                        fileName);
+
+                    return null;
+                }
+
+                XNamespace documentNamespace =
+                    document.Root.Name.Namespace;
+
+                XElement description = document.Root.Element(
+                    documentNamespace + "description");
+
+                if (description == null)
+                {
+                    Log.WriteLine(
+                        LogLevel.Warning,
+                        "Parsed FB2 does not contain description: {0}",
+                        fileName);
+                }
+
+                return description;
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                Log.WriteLine(LogLevel.Error, "Failed to read description block for {0}: {1}", fileName, ex.Message);
+                Log.WriteLine(
+                    LogLevel.Error,
+                    "Failed to read description block for {0}: {1}",
+                    fileName,
+                    exception.Message);
+
                 return null;
             }
         }
@@ -239,31 +319,101 @@ namespace TinyOPDS.Parsers
 
             return xmlText;
         }
-
-        private Encoding DetectEncoding(string xmlStart)
+        private Encoding DetectStreamEncoding(Stream stream)
         {
+            if (stream == null || !stream.CanRead)
+                return Encoding.UTF8;
+
+            long originalPosition = 0;
+
+            if (stream.CanSeek)
+                originalPosition = stream.Position;
+
             try
             {
-                if (xmlStart.Contains("encoding="))
+                var buffer = new byte[1024];
+
+                int bytesRead = stream.Read(
+                    buffer,
+                    0,
+                    buffer.Length);
+
+                if (bytesRead >= 3 &&
+                    buffer[0] == 0xEF &&
+                    buffer[1] == 0xBB &&
+                    buffer[2] == 0xBF)
                 {
-                    int encStart = xmlStart.IndexOf("encoding=\"") + 10;
-                    if (encStart > 10)
-                    {
-                        int encEnd = xmlStart.IndexOf('"', encStart);
-                        if (encEnd > encStart)
-                        {
-                            string encodingName = xmlStart.Substring(encStart, encEnd - encStart);
-                            return Encoding.GetEncoding(encodingName);
-                        }
-                    }
+                    return new UTF8Encoding(true);
                 }
+
+                if (bytesRead >= 2 &&
+                    buffer[0] == 0xFF &&
+                    buffer[1] == 0xFE)
+                {
+                    return Encoding.Unicode;
+                }
+
+                if (bytesRead >= 2 &&
+                    buffer[0] == 0xFE &&
+                    buffer[1] == 0xFF)
+                {
+                    return Encoding.BigEndianUnicode;
+                }
+
+                // Название кодировки в XML-декларации состоит из ASCII-символов,
+                // поэтому декларацию можно безопасно искать через ASCII.
+                string declaration = Encoding.ASCII.GetString(
+                    buffer,
+                    0,
+                    bytesRead);
+
+                return DetectEncoding(declaration);
             }
             catch
             {
-                // Fallback to UTF-8
+                return Encoding.UTF8;
             }
+            finally
+            {
+                if (stream.CanSeek)
+                    stream.Position = originalPosition;
+            }
+        }
+        private Encoding DetectEncoding(string xmlStart)
+        {
+            if (string.IsNullOrEmpty(xmlStart))
+                return new UTF8Encoding(false);
 
-            return Encoding.UTF8;
+            try
+            {
+                Match encodingMatch = Regex.Match(
+                    xmlStart,
+                    @"<\?xml[^>]*\bencoding\s*=\s*[""']" +
+                    @"(?<encoding>[^""']+)[""']",
+                    RegexOptions.IgnoreCase);
+
+                if (!encodingMatch.Success)
+                    return new UTF8Encoding(false);
+
+                string encodingName = encodingMatch
+                    .Groups["encoding"]
+                    .Value
+                    .Trim();
+
+                if (string.IsNullOrEmpty(encodingName))
+                    return new UTF8Encoding(false);
+
+                return Encoding.GetEncoding(encodingName);
+            }
+            catch (Exception exception)
+            {
+                Log.WriteLine(
+                    LogLevel.Warning,
+                    "Unsupported FB2 encoding, using UTF-8: {0}",
+                    exception.Message);
+
+                return new UTF8Encoding(false);
+            }
         }
 
         private void ParseDescriptionContent(XElement description, Book book, string fileName)

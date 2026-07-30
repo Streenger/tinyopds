@@ -13,8 +13,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using TinyOPDS.Data;
+using System.Text.RegularExpressions;
 
 namespace TinyOPDS.Server
 {
@@ -23,6 +25,40 @@ namespace TinyOPDS.Server
     /// </summary>
     public class BookDownloadHandler
     {
+        private static readonly Encoding Cp866 = Encoding.GetEncoding(866);
+        private static readonly Encoding Cp1251 = Encoding.GetEncoding(1251);
+
+        /// <summary>
+        /// Возможные прочтения имени записи, прочитанного через Latin-1.
+        /// Нужно для совместимости: в БД могли попасть как корректные имена (новый скан),
+        /// так и искажённые - байты CP866, прочитанные системной ANSI (старые записи).
+        /// </summary>
+        private static List<string> EntryNameVariants(string rawName)
+        {
+            var list = new List<string>();
+            if (string.IsNullOrEmpty(rawName)) return list;
+
+            list.Add(rawName);
+
+            string fixedName = LibraryNormalizer.FixEntryName(rawName);
+            if (!list.Contains(fixedName)) list.Add(fixedName);
+
+            bool allBytes = true;
+            foreach (char c in rawName) if (c > 0xFF) { allBytes = false; break; }
+
+            if (allBytes)
+            {
+                byte[] bytes = new byte[rawName.Length];
+                for (int i = 0; i < rawName.Length; i++) bytes[i] = (byte)rawName[i];
+
+                foreach (var enc in new[] { Cp1251, Cp866 })
+                {
+                    string s = enc.GetString(bytes);
+                    if (!list.Contains(s)) list.Add(s);
+                }
+            }
+            return list;
+        }
         /// <summary>
         /// Main entry point for handling book download requests
         /// </summary>
@@ -147,7 +183,70 @@ namespace TinyOPDS.Server
             }
             return null;
         }
+        /// <summary>
+        /// Creates an ASCII-only file name for HTTP downloads and ZIP entries.
+        /// Some OPDS clients cannot process non-ASCII characters in the legacy
+        /// Content-Disposition filename parameter.
+        /// </summary>
+        private static string CreateSafeDownloadFileName(
+            Book book,
+            string extension)
+        {
+            string author = book.Authors?.FirstOrDefault();
 
+            if (string.IsNullOrWhiteSpace(author))
+                author = "Unknown";
+
+            string title = book.Title;
+
+            if (string.IsNullOrWhiteSpace(title))
+                title = "Book";
+
+            string baseName = string.Format(
+                "{0}_{1}",
+                author,
+                title);
+
+            baseName = Transliteration.Front(baseName);
+
+            // Transliteration does not currently replace every Unicode dash.
+            baseName = baseName
+                .Replace('–', '-')
+                .Replace('—', '-')
+                .Replace('−', '-')
+                .Replace('‐', '-')
+                .Replace('‑', '-');
+
+            // Content-Disposition filename must remain compatible with
+            // clients that only support ASCII file names.
+            baseName = Regex.Replace(
+                baseName,
+                @"[^A-Za-z0-9._-]+",
+                "_");
+
+            baseName = Regex.Replace(
+                baseName,
+                @"_+",
+                "_");
+
+            baseName = baseName.Trim('_', '.', '-');
+
+            if (string.IsNullOrEmpty(baseName))
+                baseName = "book";
+
+            const int maximumBaseNameLength = 120;
+
+            if (baseName.Length > maximumBaseNameLength)
+            {
+                baseName = baseName.Substring(
+                    0,
+                    maximumBaseNameLength);
+
+                baseName = baseName.Trim('_', '.', '-');
+            }
+
+            return baseName + extension;
+        }
         /// <summary>
         /// Handles FB2 book download (creates ZIP with FB2 inside)
         /// </summary>
@@ -168,10 +267,9 @@ namespace TinyOPDS.Server
                 {
                     using (var zipArchive = new System.IO.Compression.ZipArchive(outputStream, System.IO.Compression.ZipArchiveMode.Create, true))
                     {
-                        string fileName = Transliteration.Front(
-                            string.Format("{0}_{1}.fb2",
-                                book.Authors.FirstOrDefault() ?? "Unknown",
-                                book.Title));
+                        string fileName = CreateSafeDownloadFileName(
+                        book,
+                         ".fb2");
 
                         var zipEntry = zipArchive.CreateEntry(fileName);
                         using (var entryStream = zipEntry.Open())
@@ -183,15 +281,24 @@ namespace TinyOPDS.Server
 
                     outputStream.Position = 0;
 
-                    string downloadFileName = Transliteration.Front(
-                        string.Format("{0}_{1}.fb2.zip",
-                            book.Authors.FirstOrDefault() ?? "Unknown",
-                            book.Title));
+                    string downloadFileName = CreateSafeDownloadFileName(
+                        book,
+                        ".fb2.zip");
+
+                    Log.WriteLine(
+    LogLevel.Info,
+    "Sending FB2 archive: HTTP filename={0}, size={1}",
+    downloadFileName,
+    outputStream.Length);
 
                     processor.OutputStream.WriteLine("HTTP/1.0 200 OK");
-                    processor.OutputStream.WriteLine("Content-Type: application/zip");
-                    processor.OutputStream.WriteLine("Content-Disposition: attachment; filename=\"{0}\"", downloadFileName);
-                    processor.OutputStream.WriteLine("Content-Length: {0}", outputStream.Length);
+                    processor.OutputStream.WriteLine("Content-Type: application/fb2+zip");
+                    processor.OutputStream.WriteLine(
+                        "Content-Disposition: attachment; filename=\"{0}\"",
+                        downloadFileName);
+                    processor.OutputStream.WriteLine(
+                        "Content-Length: {0}",
+                        outputStream.Length);
                     processor.OutputStream.WriteLine("Connection: close");
                     processor.OutputStream.WriteLine();
 
@@ -237,7 +344,7 @@ namespace TinyOPDS.Server
                     string.Format("{0}_{1}.epub",
                         book.Authors.FirstOrDefault() ?? "Unknown",
                         book.Title));
-
+                
                 processor.OutputStream.WriteLine("HTTP/1.0 200 OK");
                 processor.OutputStream.WriteLine("Content-Type: application/epub+zip");
                 processor.OutputStream.WriteLine("Content-Disposition: attachment; filename=\"{0}\"", downloadFileName);
@@ -261,6 +368,9 @@ namespace TinyOPDS.Server
             return ExtractBookContentWithCancellation(book, memStream, CancellationToken.None);
         }
 
+        /// <summary>
+        /// Extracts book content with cancellation support
+        /// </summary>
         /// <summary>
         /// Extracts book content with cancellation support
         /// </summary>
@@ -290,27 +400,32 @@ namespace TinyOPDS.Server
 
                 if (bookPath.ToLower().Contains(".zip@"))
                 {
-                    string[] pathParts = bookPath.Split('@');
+                    // Разделяем по ПЕРВОМУ ".zip@" - символ '@' может встречаться и в имени книги
+                    int sepIndex = bookPath.IndexOf(".zip@", StringComparison.OrdinalIgnoreCase);
+                    string zipPath = bookPath.Substring(0, sepIndex + 4);
+                    string targetEntry = bookPath.Substring(sepIndex + 5);
 
                     // Path traversal protection for ZIP path
-                    if (pathParts[0].Contains("..") || pathParts[0].Contains("~"))
+                    if (zipPath.Contains("..") || zipPath.Contains("~"))
                     {
-                        Log.WriteLine(LogLevel.Warning, "Suspicious ZIP path detected: {0}", pathParts[0]);
+                        Log.WriteLine(LogLevel.Warning, "Suspicious ZIP path detected: {0}", zipPath);
                         return false;
                     }
 
-                    if (!File.Exists(pathParts[0]))
+                    if (!File.Exists(zipPath))
                     {
-                        Log.WriteLine(LogLevel.Warning, "ZIP archive not found: {0}", pathParts[0]);
+                        Log.WriteLine(LogLevel.Warning, "ZIP archive not found: {0}", zipPath);
                         return false;
                     }
 
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    using (var zipArchive = System.IO.Compression.ZipFile.OpenRead(pathParts[0]))
+                    using (var zipArchive = System.IO.Compression.ZipFile.Open(zipPath,
+                        System.IO.Compression.ZipArchiveMode.Read, LibraryNormalizer.Latin1))
                     {
                         var entry = zipArchive.Entries.FirstOrDefault(e =>
-                            e.FullName.IndexOf(pathParts[1], StringComparison.OrdinalIgnoreCase) >= 0);
+                            EntryNameVariants(e.FullName).Any(v =>
+                                v.IndexOf(targetEntry, StringComparison.OrdinalIgnoreCase) >= 0));
 
                         if (entry != null)
                         {
@@ -329,13 +444,14 @@ namespace TinyOPDS.Server
                                 }
 
                                 memStream.Position = 0;
-                                Log.WriteLine(LogLevel.Info, "Successfully extracted book from ZIP: {0}", entry.FullName);
+                                Log.WriteLine(LogLevel.Info, "Successfully extracted book from ZIP: {0}",
+                                    LibraryNormalizer.FixEntryName(entry.FullName));
                                 return true;
                             }
                         }
                         else
                         {
-                            Log.WriteLine(LogLevel.Warning, "Entry not found in ZIP: {0}", pathParts[1]);
+                            Log.WriteLine(LogLevel.Warning, "Entry not found in ZIP: {0}", targetEntry);
                             return false;
                         }
                     }

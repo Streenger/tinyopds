@@ -56,11 +56,6 @@ namespace TinyOPDS.Scanner
         {
             Status = FileScannerStatus.STOPPED;
             if (zipScanner != null) zipScanner.Status = FileScannerStatus.STOPPED;
-
-            if (OnBookFound != null) OnBookFound -= BookFoundEventHandlers().Last();
-            if (OnInvalidBook != null) OnInvalidBook -= InvalidBookEventHandlers().Last();
-            if (OnFileSkipped != null) OnFileSkipped -= FileSkippedEventHandlers().Last();
-            if (OnScanCompleted != null) OnScanCompleted -= ScanCompletedEventHandlers().Last();
         }
 
         /// <summary>
