@@ -218,7 +218,6 @@
   <!-- ============== CONTENT FILES ============== -->
   <ItemGroup>
     <EmbeddedResource Include="Resources\pluralization.xml" />
-    <Content Include="readme_.txt" />
     <Content Include="TinyOPDS.ico" />
     <Content Include="License.txt" />
     <None Include="TinyOPDS.png" />
