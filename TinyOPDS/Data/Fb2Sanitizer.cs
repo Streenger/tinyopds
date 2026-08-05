@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -102,13 +103,45 @@ namespace TinyOPDS.Data
         public static string Sanitize(string text, out int fixes)
         {
             int count = 0;
+            text = StripNameSpaces(text, ref count);
+
+            if (text.Contains("</FictionBook>") == false && text.Contains("</ns0:FictionBook>"))
+            {
+                text = text.Replace("</ns0:FictionBook>", "</FictionBook>");
+                count++;
+            }
+
+            // Автоматическое исправление поврежденной кириллицы на лету
+            string fixedText = FixCorruptedCyrillic(text);
+            if (fixedText != text)
+            {
+                text = fixedText;
+                count++;
+            }
+            // Если заголовок книги состоит только из знаков вопроса или пустой — подстраховываем
+            text = Regex.Replace(text, @"<book-title>\?[?,\s]*</book-title>", "<book-title>Неизвестная книга</book-title>", RegexOptions.IgnoreCase);
             text = StripControlChars(text, ref count);
             text = FixAmpersands(text, ref count);
             text = EscapeStrayLt(text, ref count);
             fixes = count;
             return text;
         }
+        private static readonly Regex NsPrefixPattern = new Regex(@"(</?\s*)[a-zA-Z0-9_-]+:", RegexOptions.Compiled);
 
+        /// <summary>
+        /// Удаляет мусорные префиксы пространств имён (например, <ns0:tag> -> <tag> и </ns0:tag> -> </tag>)
+        /// </summary>
+        private static string StripNameSpaces(string text, ref int fixes)
+        {
+            int local = 0;
+            string result = NsPrefixPattern.Replace(text, m =>
+            {
+                local++;
+                return m.Groups[1].Value; // Оставляем только скобку "<" или "</"
+            });
+            fixes += local;
+            return result;
+        }
         /// <summary>Управляющие символы, запрещённые в XML 1.0 при любой схеме.</summary>
         private static string StripControlChars(string text, ref int fixes)
         {
@@ -328,6 +361,69 @@ namespace TinyOPDS.Data
             if (c >= 'a' && c <= 'z') return true;
             if (c >= '0' && c <= '9') return true;
             return c == '_' || c == '-' || c == ':' || c == '.';
+        }
+        // --- Восстановление поврежденной кириллицы (кракозябров и знаков ?) ---
+
+        private static readonly Regex CyrillicCheck = new Regex(@"[а-яА-ЯёЁ]", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Пытается восстановить текст, превратившийся в знаки вопроса или кракозябры,
+        /// перебирая стандартные русские кодировки.
+        /// </summary>
+        public static string FixCorruptedCyrillic(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+
+            // Если в тексте нет знаков вопроса и он уже содержит кириллицу — он в порядке
+            if (!text.Contains('?') && CyrillicCheck.IsMatch(text)) return text;
+
+            // Если слишком много знаков вопроса, пробуем восстановить из UTF-8/ANSI сдвигов
+            Encoding[] encodingsToTry = new Encoding[]
+            {
+                Encoding.GetEncoding(1251), // Windows-1251
+                Encoding.GetEncoding(866),  // CP866
+                Encoding.GetEncoding(20866) // KOI8-R
+            };
+
+            string bestResult = text;
+            int maxCyrillicCount = CountCyrillic(text);
+
+            foreach (var enc in encodingsToTry)
+            {
+                try
+                {
+                    // Пробуем переинтерпретировать текущие символы как байты другой кодировки
+                    byte[] bytes = Encoding.Default.GetBytes(text);
+                    string decoded = enc.GetString(bytes);
+
+                    int cyrillicCount = CountCyrillic(decoded);
+                    int questionCount = decoded.Count(c => c == '?');
+
+                    // Если стало больше русских букв и меньше/ровно знаков вопроса — это лучший кандидат
+                    if (cyrillicCount > maxCyrillicCount && questionCount <= text.Count(c => c == '?'))
+                    {
+                        maxCyrillicCount = cyrillicCount;
+                        bestResult = decoded;
+                    }
+                }
+                catch
+                {
+                    // Игнорируем ошибки кодировок
+                }
+            }
+
+            return bestResult;
+        }
+
+        private static int CountCyrillic(string s)
+        {
+            int count = 0;
+            foreach (char c in s)
+            {
+                if ((c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') || c == 'ё' || c == 'Ё')
+                    count++;
+            }
+            return count;
         }
     }
 }

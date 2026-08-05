@@ -49,11 +49,48 @@ namespace TinyOPDS.Parsers
 
             try
             {
-                // Read only description block
-                var description = ReadDescriptionBlock(stream, fileName);
+                byte[] buffer;
+                using (var ms = new MemoryStream())
+                {
+                    stream.CopyTo(ms);
+                    buffer = ms.ToArray();
+                }
+
+                XElement description = null;
+
+                // Первая попытка: читаем как есть
+                try
+                {
+                    using (var testStream = new MemoryStream(buffer))
+                    {
+                        description = ReadDescriptionBlock(testStream, fileName);
+                    }
+                }
+                catch
+                {
+                    // Если упало — сразу чистим буфер через санитайзер (убираем ns0:, чиним теги)
+                    string raw = Fb2Sanitizer.BytesToText(buffer);
+                    int fixes;
+                    string clean = Fb2Sanitizer.Sanitize(raw, out fixes);
+
+                    buffer = Encoding.UTF8.GetBytes(clean);
+                    if (fixes > 0)
+                    {
+                        Log.WriteLine(LogLevel.Info, "FB2Parser: auto-sanitized {0} ({1} fixes)", fileName, fixes);
+                    }
+                }
+
+                // Вторая попытка: читаем из очищенного буфера (если первая не удалась)
+                if (description == null)
+                {
+                    using (var cleanStream = new MemoryStream(buffer))
+                    {
+                        description = ReadDescriptionBlock(cleanStream, fileName);
+                    }
+                }
+
                 if (description != null)
                 {
-                    // Parse description content
                     ParseDescriptionContent(description, book, fileName);
                 }
                 else
@@ -123,6 +160,37 @@ namespace TinyOPDS.Parsers
         {
             try
             {
+                // Санитизация потока «на лету» (удаление ns0:, выравнивание тегов и прочего мусора)
+                if (stream != null && stream.CanRead)
+                {
+                    try
+                    {
+                        if (stream.CanSeek) stream.Position = 0;
+                        byte[] buffer;
+                        using (var ms = new MemoryStream())
+                        {
+                            stream.CopyTo(ms);
+                            buffer = ms.ToArray();
+                        }
+
+                        string raw = Fb2Sanitizer.BytesToText(buffer);
+                        int fixes;
+                        string clean = Fb2Sanitizer.Sanitize(raw, out fixes);
+
+                        if (fixes > 0)
+                        {
+                            buffer = Encoding.UTF8.GetBytes(clean);
+                            Log.WriteLine(LogLevel.Info, "FB2Parser: auto-sanitized stream for {0} ({1} fixes)", fileName, fixes);
+                        }
+
+                        stream = new MemoryStream(buffer);
+                    }
+                    catch
+                    {
+                        // Если что-то пошло не так, оставляем поток как есть
+                    }
+                }
+
                 if (stream == null || !stream.CanRead)
                 {
                     Log.WriteLine(
@@ -150,11 +218,7 @@ namespace TinyOPDS.Parsers
                 stream.Position = 0;
 
                 const int charBufferSize = 8192;
-
-                // Защита от повреждённого файла, в котором отсутствует
-                // закрывающий тег description. Это уже не прежний лимит 64 КБ.
                 const int maxDescriptionLength = 16 * 1024 * 1024;
-
                 const string closingTag = "</description>";
 
                 var contentBuilder = new StringBuilder();
@@ -171,108 +235,95 @@ namespace TinyOPDS.Parsers
                 {
                     while (true)
                     {
-                        int charsRead = reader.Read(
-                            charBuffer,
-                            0,
-                            charBuffer.Length);
-
+                        int charsRead = reader.Read(charBuffer, 0, charBufferSize);
                         if (charsRead <= 0)
-                            break;
-
-                        contentBuilder.Append(
-                            charBuffer,
-                            0,
-                            charsRead);
-
-                        int descriptionEnd = contentBuilder
-                            .ToString()
-                            .IndexOf(
-                                closingTag,
-                                StringComparison.OrdinalIgnoreCase);
-
-                        if (descriptionEnd >= 0)
                         {
-                            int requiredLength =
-                                descriptionEnd + closingTag.Length;
-
-                            if (contentBuilder.Length > requiredLength)
-                            {
-                                contentBuilder.Length = requiredLength;
-                            }
-
-                            descriptionFound = true;
                             break;
+                        }
+
+                        if (!descriptionFound)
+                        {
+                            string chunk = new string(charBuffer, 0, charsRead);
+                            int descStartIndex = chunk.IndexOf("description", StringComparison.OrdinalIgnoreCase);
+
+                            if (descStartIndex >= 0)
+                            {
+                                int ltIndex = chunk.LastIndexOf('<', descStartIndex);
+                                if (ltIndex >= 0)
+                                {
+                                    descriptionFound = true;
+                                    contentBuilder.Append(charBuffer, ltIndex, charsRead - ltIndex);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            contentBuilder.Append(charBuffer, 0, charsRead);
                         }
 
                         if (contentBuilder.Length > maxDescriptionLength)
                         {
                             Log.WriteLine(
                                 LogLevel.Warning,
-                                "Description block exceeds safety limit " +
-                                "of 16 MB in file: {0}",
+                                "Description block exceeds maximum length ({0} bytes) in {1}",
+                                maxDescriptionLength,
                                 fileName);
 
                             return null;
+                        }
+
+                        if (descriptionFound && contentBuilder.ToString().IndexOf(closingTag, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            break;
                         }
                     }
                 }
 
                 if (!descriptionFound)
                 {
-                    Log.WriteLine(
-                        LogLevel.Warning,
-                        "No complete description block found in file: {0}",
-                        fileName);
-
                     return null;
                 }
 
-                string content = contentBuilder.ToString();
+                string xmlContent = contentBuilder.ToString();
 
-                string xmlContent = FixXmlEncoding(content);
+                // Финальная страховка закрывающего тега
+                if (!xmlContent.Contains("</description>") && xmlContent.Contains("</ns0:description>"))
+                {
+                    xmlContent = xmlContent.Replace("</ns0:description>", "</description>");
+                }
 
-                XDocument document = XDocument.Parse(
-                    xmlContent + "</FictionBook>",
-                    LoadOptions.PreserveWhitespace);
+                int closeIndex = xmlContent.IndexOf("</description>", StringComparison.OrdinalIgnoreCase);
+                if (closeIndex >= 0)
+                {
+                    xmlContent = xmlContent.Substring(0, closeIndex + 14);
+                }
 
-                if (document.Root == null)
+                try
+                {
+                    return XElement.Parse(xmlContent, LoadOptions.PreserveWhitespace);
+                }
+                catch (Exception e)
                 {
                     Log.WriteLine(
-                        LogLevel.Warning,
-                        "FB2 root element is missing in file: {0}",
-                        fileName);
+                        LogLevel.Error,
+                        "Failed to read description block for {0}: {1}",
+                        fileName,
+                        e.Message);
 
                     return null;
                 }
-
-                XNamespace documentNamespace =
-                    document.Root.Name.Namespace;
-
-                XElement description = document.Root.Element(
-                    documentNamespace + "description");
-
-                if (description == null)
-                {
-                    Log.WriteLine(
-                        LogLevel.Warning,
-                        "Parsed FB2 does not contain description: {0}",
-                        fileName);
-                }
-
-                return description;
             }
-            catch (Exception exception)
+            catch (Exception e)
             {
                 Log.WriteLine(
                     LogLevel.Error,
-                    "Failed to read description block for {0}: {1}",
+                    "Exception while reading description block for {0}: {1}",
                     fileName,
-                    exception.Message);
+                    e.Message);
 
                 return null;
             }
         }
-
         private string FixXmlEncoding(string xmlText)
         {
             // Remove BOM if present
