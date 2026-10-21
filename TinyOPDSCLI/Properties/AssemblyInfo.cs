@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 // General Information about an assembly is controlled through the following 
@@ -31,5 +31,5 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("3.15.5.0")]
-[assembly: AssemblyFileVersion("3.15.5.0")]
+[assembly: AssemblyVersion("3.16.0.0")]
+[assembly: AssemblyFileVersion("3.16.0.0")] (added support for PPMd compressed archives, fixed download file names and MIME type for OPDS clients, fixed client authorization, database schema mismatches and web reader escaping, version changed to 3.16 closes #80)
