@@ -110,7 +110,12 @@ namespace TinyOPDS.Data
                 text = text.Replace("</ns0:FictionBook>", "</FictionBook>");
                 count++;
             }
-
+            // Если используется префикс xlink, но в корневом теге FictionBook не объявлен namespace xlink — добавляем
+            if (text.Contains("xlink:") && !text.Contains("xmlns:xlink"))
+            {
+                text = text.Replace("<FictionBook", "<FictionBook xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
+                count++;
+            }
             // Автоматическое исправление поврежденной кириллицы на лету
             string fixedText = FixCorruptedCyrillic(text);
             if (fixedText != text)
@@ -118,6 +123,9 @@ namespace TinyOPDS.Data
                 text = fixedText;
                 count++;
             }
+            // Удаляем пустые или некорректные теги серий вида <sequence name="" number="" />
+            text = Regex.Replace(text, @"<sequence\s+name\s*=\s*""\s*""\s+number\s*=\s*""\s*""\s*/?>", "", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"<sequence\s+number\s*=\s*""\s*""\s+name\s*=\s*""\s*""\s*/?>", "", RegexOptions.IgnoreCase);
             // Если заголовок книги состоит только из знаков вопроса или пустой — подстраховываем
             text = Regex.Replace(text, @"<book-title>\?[?,\s]*</book-title>", "<book-title>Неизвестная книга</book-title>", RegexOptions.IgnoreCase);
             text = StripControlChars(text, ref count);
