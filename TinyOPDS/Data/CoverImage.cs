@@ -1,4 +1,4 @@
-﻿/*
+/*
 * This file is part of TinyOPDS server project
 * https://github.com/sensboston/tinyopds
 *
@@ -70,7 +70,7 @@ namespace TinyOPDS.Data
                             return;
                         }
 
-                        using (var zipArchive = System.IO.Compression.ZipFile.OpenRead(pathParts[0]))
+                        using (var zipArchive = System.IO.Compression.ZipFile.Open(pathParts[0], System.IO.Compression.ZipArchiveMode.Read, LibraryNormalizer.Latin1))
                         using (var entryReader = new ZipEntryReader(pathParts[0]))
                         {
                             var entry = zipArchive.Entries.FirstOrDefault(e =>

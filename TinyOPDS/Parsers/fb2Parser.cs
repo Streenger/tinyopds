@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of TinyOPDS server project
  * https://github.com/sensboston/tinyopds
  *
@@ -300,6 +300,19 @@ namespace TinyOPDS.Parsers
 
                 try
                 {
+                    if (!xmlContent.Contains("xmlns:xlink="))
+                    {
+                        xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns:xlink=\"http://www.w3.org/1999/xlink\"$1", RegexOptions.IgnoreCase);
+                    }
+                    if (!xmlContent.Contains("xmlns:l="))
+                    {
+                        xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns:l=\"http://www.w3.org/1999/xlink\"$1", RegexOptions.IgnoreCase);
+                    }
+                    if (!xmlContent.Contains("xmlns="))
+                    {
+                        xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\"$1", RegexOptions.IgnoreCase);
+                    }
+
                     return XElement.Parse(xmlContent, LoadOptions.PreserveWhitespace);
                 }
                 catch (Exception e)
