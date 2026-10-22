@@ -1,161 +1,74 @@
-# TinyOPDS 3.12
-Lightweight and powerful OPDS server for home libraries
+# TinyOPDS v3.17.0 (Streenger Edition)
+Lightweight and powerful OPDS server for home and network libraries
 
 ![](https://github.com/sensboston/tinyopds/blob/master/wiki/ss1.png?raw=true)
 
-TinyOPDS is a simple and lightweight OPDS server written in C#. Works on Windows, Linux and macOS via .NET or Mono.
-
-## TinyOPDS 3.12 - Revolutionary Update!
-
-After installing this release (3.12), I strongly recommend deleting the database file (books.sqlite) and rescanning the library from scratch.
-
-**TinyOPDS 3.12** - the result of intensive development with **over 85% of code rewritten**. The main change is the transition from in-memory storage to using a **standard SQL engine**, paving the way for porting to any server platform.
-
-### Key changes in version 3.12:
-
-- **SQLite database** - instead of loading the entire library into memory, now uses a standard SQL engine with FTS5 full-text search
-- **Modern web interface** - fully functional embedded website with beautiful design, responsive layout, and pagination support for large collections
-- **Universal web reader** - unique built-in reader for FB2 and EPUB files accessible through any browser, with functionality comparable to specialized reader apps (themes, font settings, bookmarks)
-- **Revolutionary search** - unique combination of Russian Soundex and intelligent transliteration allows finding "Dostoevsky" by searching "Достоевский" and vice versa, plus typo correction
-- **Dramatic memory reduction** - from 1.6GB to 120-150MB for a 500,000 book library (but for smaller libraries (80000 books), app runs even on Raspberry Pi Zero 2 W with 1GB RAM!)
-- **Smart scanning** - automatic duplicate detection and removal, keeping the best versions
-- **Redesigned HTTP server** - now efficiently handles parallel requests from multiple clients
-- **TinyOPDSCLI** - console version renamed and modernized to current standards
-- **Easy installation** - CLI now has installer option for Linux and macOS, no command line knowledge required
-- **Multi-language support** - interface (GUI and embedded website) localized in 7 languages
-
-### Real performance metrics:
-
-| Metric | Version 2.x | Version 3.x |
-|--------|------------|------------|
-| Architecture | All in memory | SQL engine |
-| RAM for 500K books | ~1.6 GB | ~120-150 MB |
-| Web interface | Basic | Modern with pagination |
-| Book reader | No | FB2 + EPUB |
-| Parallel requests | Limited | Up to 100 clients |
-| Typo-tolerant search | No | Yes |
-| Transliteration | No | Yes |
-| Duplicates | Stored | Auto-removed |
-| Installers | Windows | Windows, Linux, macOS |
-
-### System Requirements
-
-- **.NET Framework 4.8** (Windows) or **Mono 6.0+** (Linux/macOS)
-- **2+ GB RAM** minimum (for large libraries 500000+ books)
-- **10 MB** for application + **2GB** for the large library database
-
-### Documentation
-
-For detailed documentation, installation and configuration instructions, please visit the [Project Wiki](https://github.com/sensboston/tinyopds/wiki)
-
-### Support Development
-
-If TinyOPDS helped organize your library, you can support development - donation links are available on the right side of this page.
+**TinyOPDS (Streenger Edition)** — расширенный и стабилизированный форк легковесного OPDS-сервера на C#/.NET 4.8 (Mono для Linux/macOS). Проект ориентирован на надёжную работу с реальными «грязными» коллекциями электронных книг (Либрусек, Флибуста, архивы самиздата), предотвращение потери данных и устранение сбоев сканирования.
 
 ---
 
-## TinyOPDS 3.12
-Легкий та потужний OPDS сервер для домашніх бібліотек
+## 🚀 Особенности редакции Streenger Edition
 
-TinyOPDS - це простий та легкий OPDS сервер, написаний на C#. Працює на Windows, Linux та macOS через .NET або Mono.
+В этой версии объединены актуальные возможности upstream (`sensboston/tinyopds` 3.16–3.17) и собственные модули ремонта и нормализации структуры книг.
 
-## TinyOPDS отримав революційне оновлення!
+### 1. Умная обработка и ремонт повреждённых FB2 (`Fb2Sanitizer` / `Fb2Repair`)
+- **Автоматическая регистрация пространств имён XML**: встроенное исправление парсера для тегов описания `<description>` с незадекларированными префиксами (`xmlns:l`, `xmlns:xlink`, `xmlns:ns0`), спасающее от сбоя парсинга `XDocument` и ошибочной отметки книг как повреждённых (`Book.IsValid=false`).
+- **Нормализация разметки на лету**: удаление фантомных префиксов пространств имён (`ns0:FictionBook` и др.), очистка некорректных тегов серий `<sequence name="" number="" />`, автоисправление поломанных абзацев `<p>` в аннотациях и восстановление битых амперсандов.
+- **Страховка метаданных**: фильтрация заглушек названий из знаков вопроса (`???`), автогенерация детерминированных UUID при отсутствии ID документа, извлечение годов издания из блока `publish-info`.
 
-Після встановлення цього релізу (3.12) я наполегливо рекомендую видалити файл бази даних (books.sqlite) і просканувати бібліотеку заново.
+### 2. Продвинутая нормализация библиотеки (`LibraryNormalizer`)
+- Поддержка правильных кодировок названий файлов внутри ZIP (`Latin1`, `CP866`, `CP1251`) без кракозябр при сканировании, чтении и отдаче обложек.
+- Инструменты инспекции и пакетной нормализации коллекций книг.
 
-**TinyOPDS 3.12** - результат інтенсивної розробки, в ході якої **переписано понад 85% коду**. Головна зміна - перехід від зберігання даних в пам'яті до використання **стандартного SQL рушія**, що відкриває шлях до портування на будь-які серверні платформи.
-
-### Ключові зміни версії 3.12:
-
-- **SQLite база даних** - замість завантаження всієї бібліотеки в пам'ять тепер використовується стандартний SQL рушій з повнотекстовим пошуком FTS5
-- **Сучасний веб-інтерфейс** - повноцінний вбудований веб-сайт з красивим дизайном, адаптивною версткою та підтримкою пагінації для великих колекцій
-- **Універсальна веб-читалка** - унікальний вбудований рідер для FB2 та EPUB файлів, доступний через браузер, з функціональністю на рівні спеціалізованих додатків (теми, налаштування шрифтів, закладки)
-- **Революційний пошук** - унікальна комбінація російського/англійського Soundex та інтелектуальної транслітерації дозволяє знаходити "Достоєвський" за запитом "Дастаєвський" або "Dostoevsky" і навпаки, а також виправляє друкарські помилки
-- **Радикальне зниження споживання пам'яті** - з 1.6GB до 120-150MB для бібліотеки з 500,000 книг (з невеликою бібліотекою на 80000 книг, програма працює навіть на Raspberry Pi Zero 2 W з 1GB RAM!)
-- **Інтелектуальне сканування** - автоматичне визначення та видалення дублікатів зі збереженням кращих версій
-- **Перероблений HTTP сервер** - тепер ефективно обробляє паралельні запити від множини клієнтів
-- **TinyOPDSCLI** - консольна версія перейменована та модернізована для сучасних стандартів
-- **Проста установка** - в консольну версію додані інсталятори для Linux та macOS, що не потребують знання командного рядка
-- **Багатомовна підтримка** - інтерфейс програми та вбудованого веб-сайту локалізовані для 7 мов
-
-### Реальні показники:
-
-| Метрика | Версія 2.x | Версія 3.x |
-|---------|------------|------------|
-| Архітектура | Все в пам'яті | SQL рушій |
-| RAM для 500K книг | ~1.6 GB | ~120-150 MB |
-| Веб-інтерфейс | Базовий | Сучасний з пагінацією |
-| Читалка книг | Ні | FB2 + EPUB |
-| Паралельні запити | Обмежено | До 100 клієнтів |
-| Пошук з помилками | Ні | Є |
-| Транслітерація | Ні | Є |
-| Дублікати | Зберігаються | Автовидалення |
-| Інсталятори | Windows | Windows, Linux, macOS |
-
-### Системні вимоги
-
-- **.NET Framework 4.8** (Windows) або **Mono 6.0+** (Linux/macOS)
-- **2+ GB RAM** мінімум (для великих бібліотек на 500000 книг і більше)
-- **10 MB** для додатку + **2GB** для бази даних книг великої бібліотеки
-
-### Документація
-
-Детальна документація, інструкції з установки та налаштування доступні в [Wiki проекту](https://github.com/sensboston/tinyopds/wiki)
-
-### Підтримка розробки
-
-Якщо TinyOPDS допоміг організувати вашу бібліотеку, можете підтримати розробку - посилання на донати знаходяться праворуч на сторінці.
+### 3. Интеграция улучшений Upstream (3.16 – 3.17)
+- **Любые алгоритмы сжатия ZIP**: поддержка PPMd, LZMA, BZip2 и Deflate64 через интеграцию `SharpCompress` и `ZipEntryReader`.
+- **Полнотекстовый поиск FTS5**: корректная обработка поисковых запросов с кавычками, пунктуацией и специальными символами.
+- **Однократная миграция индекса `BooksFTS`**: автоматическая очистка потерянных записей и дубликатов с фиксацией версии через `PRAGMA user_version`.
+- **Оптимизация производительности**: кэширование статистики жанров и серий, быстрый переход по авторам и постраничная догрузка связей книг для минимального потребления памяти.
+- **Безопасность и совместимость**:
+  - Корректная авторизация HTTP Basic Auth по RFC 7617 (поддержка двоеточий в паролях).
+  - Санитизация веб-читалки для защиты от XSS-инъекций.
+  - Совместимые ASCII-имена файлов в заголовке `Content-Disposition` и правильный MIME-тип `application/fb2+zip` для стабильной загрузки во всех клиентах (FBReader, AlReader, Moon+ Reader и др.).
 
 ---
 
-## TinyOPDS 3.12
-Легкий, но мощный OPDS сервер для домашних библиотек
+## 📊 Сравнение версий
 
-TinyOPDS - это простой OPDS сервер, написанный на C#. Работает на Windows, Linux и macOS через .NET или Mono.
+| Характеристика | Базовый TinyOPDS 3.12 | Upstream 3.17 | Streenger Edition 3.17 |
+|---|---|---|---|
+| Хранилище | SQLite + FTS5 | SQLite + FTS5 | SQLite + FTS5 (с защитой от сиротских записей) |
+| Сжатие архивов | Только Deflate | PPMd, LZMA, Deflate64 | PPMd, LZMA, Deflate64 + фикс кодировок Latin1 |
+| Чтение битых FB2 | Падает на ошибках XML | Базовая обработка | `Fb2Sanitizer` + `Fb2Repair` + авто-неймспейсы |
+| Кириллица в именах ZIP | Возможны кракозябры | Зависит от клиента | Полная поддержка (Latin1/CP866/CP1251) |
+| Веб-читалка | FB2 + EPUB | FB2 + EPUB (XSS safe) | FB2 + EPUB (XSS safe + поддержка l:href) |
+| Версии GUI / CLI | Могли расходиться | Раздельные релизы | Полная синхронизация версий |
 
-## TinyOPDS получил революционное обновление!
+---
 
-После установки этого релиза (3.12) я настоятельно рекомендую удалить файл базы данных (books.sqlite) и просканировать базу заново
+## 🛠 Системные требования
 
-**TinyOPDS 3.12** - результат интенсивной разработки, в ходе которой **переписано более 85% кода**. Главное изменение - переход от хранения данных в памяти к использованию **стандартного SQL движка**, что открывает путь к портированию на любые серверные платформы.
+- **ОС**: Windows 10/11, Windows Server (или Linux / macOS под управлением Mono 6.0+)
+- **Среда выполнения**: .NET Framework 4.8 (Windows) или Mono (Linux/macOS)
+- **Оперативная память**: от 150–200 МБ для работы с крупными коллекциями (от 100 000+ книг)
 
-### Ключевые изменения версии 3.12:
+---
 
-- **SQLite база данных** - вместо загрузки всей библиотеки в память теперь используется стандартный SQL движок с полнотекстовым поиском FTS5
-- **Современный веб-интерфейс** - полноценный встроенный веб-сайт с красивым дизайном, адаптивной вёрсткой и поддержкой пагинации для больших коллекций
-- **Универсальная веб-читалка** - уникальный встроенный ридер для FB2 и EPUB файлов, доступный через браузер, с функциональностью на уровне специализированных приложений (темы, настройка шрифтов, закладки)
-- **Революционный поиск** - уникальная комбинация русского/английского Soundex и интеллектуальной транслитерации позволяет находить "Достоевский" по запросу "Дастаевский" или "Dostoevsky" и наоборот, а также исправляет опечатки
-- **Радикальное снижение потребления памяти** - с 1.6GB до 120-150MB для библиотеки из 500,000 книг (с небольшой библиотекой на 80000 книг, программа работает даже на Raspberry Pi Zero 2 W с 1GB RAM!)
-- **Интеллектуальное сканирование** - автоматическое определение и удаление дубликатов с сохранением лучших версий
-- **Переработанный HTTP сервер** - теперь эффективно обрабатывает параллельные запросы от множества клиентов
-- **TinyOPDSCLI** - консольная версия переименована и модернизирована для современных стандартов
-- **Простая установка** - в консольную версию добавлены инсталляторы для Linux и macOS, не требующие знания командной строки
-- **Мультиязычная поддержка** - интерфейс программы и встроенного веб-сайта локализованы для 7 языков
+## 📦 Сборка и запуск
 
-### Реальные показатели:
+### Сборка через Visual Studio или MSBuild:
+```powershell
+# Сборка Release-конфигурации
+MSBuild.exe TinyOPDS.sln /p:Configuration=Release /t:Rebuild
+```
 
-| Метрика | Версия 2.x | Версия 3.x |
-|---------|------------|------------|
-| Архитектура | Всё в памяти | SQL движок |
-| RAM для 500K книг | ~1.6 GB | ~120-150 MB |
-| Веб-интерфейс | Базовый | Современный с пагинацией |
-| Читалка книг | Нет | FB2 + EPUB |
-| Параллельные запросы | Ограниченно | До 100 клиентов |
-| Поиск с опечатками | Нет | Есть |
-| Транслитерация | Нет | Есть |
-| Дубликаты | Хранятся | Автоудаление |
-| Инсталляторы | Windows | Windows, Linux, macOS |
+### Запуск:
+- **GUI-версия**: `TinyOPDS\bin\Release\TinyOPDS.exe`
+- **Консольная версия**: `TinyOPDSCLI\bin\Release\TinyOPDSCLI.exe -p 8080 -l "C:\Books"`
 
-### Системные требования
+---
 
-- **.NET Framework 4.8** (Windows) или **Mono 6.0+** (Linux/macOS)
-- **2+ GB RAM** минимум (для больших библиотек на 500000 книг и больше)
-- **10 MB** для приложения + **2GB** для базы данных книг большой библиотеки
+## 📄 Документация и ссылки
 
-### Документация
-
-Подробная документация, инструкции по установке и настройке доступны в [Wiki проекта](https://github.com/sensboston/tinyopds/wiki)
-
-### Поддержка разработки
-
-Если TinyOPDS помог организовать вашу библиотеку, можете поддержать разработку - ссылки на донаты находятся справа на странице.
+- Подробные релиз-ноутсы текущей версии: [`RELEASE_NOTES_3.17.md`](RELEASE_NOTES_3.17.md)
+- Базовый upstream-проект: [sensboston/tinyopds](https://github.com/sensboston/tinyopds)
+- Лицензия: MIT
