@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of TinyOPDS server project
  * https://github.com/sensboston/tinyopds
  *
@@ -400,7 +400,118 @@ namespace TinyOPDS
             serverName.Text = Settings.Default.ServerName ?? "Home library";
             serverName.Validated += ServerName_Validated;
 
-            appVersion.Text = string.Format(Localizer.Text("version {0}.{1} {2}"), Utils.Version.Major, Utils.Version.Minor, Utils.Version.Major == 0 ? " (beta)" : "");
+            appVersion.Text = string.Format(Localizer.Text("version {0}.{1} (Streenger Edition)"), Utils.Version.Major, Utils.Version.Minor);
+
+            try
+            {
+                if (appVersion.Parent != null && appVersion.Parent.Controls["linkForkHome"] == null)
+                {
+                    var parent = appVersion.Parent;
+
+                    var refLabel17 = parent.Controls["label17"] as System.Windows.Forms.Label;
+                    var refLabel18 = parent.Controls["label18"] as System.Windows.Forms.Label;
+                    var refLink2 = parent.Controls["linkLabel2"] as System.Windows.Forms.LinkLabel;
+
+                    int labelX = refLabel18 != null ? refLabel18.Location.X : 205;
+                    int labelWidth = refLabel18 != null ? refLabel18.Width : 365;
+                    int linkX = refLink2 != null ? refLink2.Location.X : 580;
+                    var font = refLabel18 != null ? refLabel18.Font : appVersion.Font;
+
+                    int baseLicenseY = refLabel18 != null ? refLabel18.Location.Y : 410;
+                    int stepY = (refLabel18 != null && refLabel17 != null && refLabel18.Location.Y > refLabel17.Location.Y) 
+                                ? (refLabel18.Location.Y - refLabel17.Location.Y) 
+                                : 35;
+
+                    int forkY = baseLicenseY + stepY;
+                    int docY = baseLicenseY + (stepY * 2);
+                    int thanksY = baseLicenseY + (stepY * 3);
+
+                    // Fork repository
+                    var lblFork = new System.Windows.Forms.Label
+                    {
+                        Name = "lblForkTitle",
+                        Text = "Fork repository:",
+                        Font = font,
+                        Location = new System.Drawing.Point(labelX, forkY),
+                        Size = new System.Drawing.Size(labelWidth, refLabel18 != null ? refLabel18.Height : 31),
+                        TextAlign = System.Drawing.ContentAlignment.TopRight
+                    };
+                    var linkFork = new System.Windows.Forms.LinkLabel
+                    {
+                        Name = "linkForkHome",
+                        Text = "https://github.com/Streenger/tinyopds",
+                        Font = font,
+                        AutoSize = true,
+                        Location = new System.Drawing.Point(linkX, forkY)
+                    };
+                    linkFork.LinkClicked += (snd, ea) =>
+                    {
+                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "https://github.com/Streenger/tinyopds", UseShellExecute = true }); } catch { }
+                    };
+
+                    // Documentation + Кнопка Readme
+                    var lblDoc = new System.Windows.Forms.Label
+                    {
+                        Name = "lblDocTitle",
+                        Text = "Documentation:",
+                        Font = font,
+                        Location = new System.Drawing.Point(labelX, docY),
+                        Size = new System.Drawing.Size(labelWidth, refLabel18 != null ? refLabel18.Height : 31),
+                        TextAlign = System.Drawing.ContentAlignment.TopRight
+                    };
+                    var btnReadme = new System.Windows.Forms.Button
+                    {
+                        Name = "btnOpenReadme",
+                        Text = "Readme",
+                        Font = font,
+                        AutoSize = true,
+                        Cursor = System.Windows.Forms.Cursors.Hand,
+                        Location = new System.Drawing.Point(linkX, docY - 2),
+                        Height = (refLabel18 != null ? refLabel18.Height : 24)
+                    };
+                    btnReadme.Click += (sndBtn, eaBtn) =>
+                    {
+                        try
+                        {
+                            string appDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                            string readmePath = System.IO.Path.Combine(appDir, "README.txt");
+                            if (!System.IO.File.Exists(readmePath)) readmePath = System.IO.Path.Combine(appDir, "README.md");
+                            if (!System.IO.File.Exists(readmePath)) readmePath = System.IO.Path.Combine(appDir, "RELEASE_NOTES_3.17.md");
+
+                            if (System.IO.File.Exists(readmePath))
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = readmePath, UseShellExecute = true });
+                            }
+                            else
+                            {
+                                var res = System.Windows.Forms.MessageBox.Show(
+                                    "Локальный файл README.txt не найден.\nОткрыть страницу на GitHub?",
+                                    "Readme",
+                                    System.Windows.Forms.MessageBoxButtons.YesNo,
+                                    System.Windows.Forms.MessageBoxIcon.Information);
+
+                                if (res == System.Windows.Forms.DialogResult.Yes)
+                                {
+                                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "https://github.com/Streenger/tinyopds/blob/master/README.md", UseShellExecute = true });
+                                }
+                            }
+                        }
+                        catch { }
+                    };
+
+                    // Сдвиг блока Special thanks
+                    var lblThanks = parent.Controls["label20"];
+                    var linkThanks = parent.Controls["linkLabel6"];
+                    if (lblThanks != null) lblThanks.Location = new System.Drawing.Point(lblThanks.Location.X, thanksY);
+                    if (linkThanks != null) linkThanks.Location = new System.Drawing.Point(linkThanks.Location.X, thanksY);
+
+                    parent.Controls.Add(lblFork);
+                    parent.Controls.Add(linkFork);
+                    parent.Controls.Add(lblDoc);
+                    parent.Controls.Add(btnReadme);
+                }
+            }
+            catch { }
             filterByLanguage.Checked = Settings.Default.FilterBooksByInterfaceLanguage;
             oneInstance.Checked = Settings.Default.OnlyOneInstance;
             darkTheme.Checked = Settings.Default.DarkThemeOnWeb;
@@ -1043,7 +1154,118 @@ namespace TinyOPDS
             Settings.Default.Language = lang;
             Settings.Default.Save();
             Localizer.SetLanguage(this, lang);
-            appVersion.Text = string.Format(Localizer.Text("version {0}.{1} {2}"), Utils.Version.Major, Utils.Version.Minor, Utils.Version.Major == 0 ? " (beta)" : "");
+            appVersion.Text = string.Format(Localizer.Text("version {0}.{1} (Streenger Edition)"), Utils.Version.Major, Utils.Version.Minor);
+
+            try
+            {
+                if (appVersion.Parent != null && appVersion.Parent.Controls["linkForkHome"] == null)
+                {
+                    var parent = appVersion.Parent;
+
+                    var refLabel17 = parent.Controls["label17"] as System.Windows.Forms.Label;
+                    var refLabel18 = parent.Controls["label18"] as System.Windows.Forms.Label;
+                    var refLink2 = parent.Controls["linkLabel2"] as System.Windows.Forms.LinkLabel;
+
+                    int labelX = refLabel18 != null ? refLabel18.Location.X : 205;
+                    int labelWidth = refLabel18 != null ? refLabel18.Width : 365;
+                    int linkX = refLink2 != null ? refLink2.Location.X : 580;
+                    var font = refLabel18 != null ? refLabel18.Font : appVersion.Font;
+
+                    int baseLicenseY = refLabel18 != null ? refLabel18.Location.Y : 410;
+                    int stepY = (refLabel18 != null && refLabel17 != null && refLabel18.Location.Y > refLabel17.Location.Y) 
+                                ? (refLabel18.Location.Y - refLabel17.Location.Y) 
+                                : 35;
+
+                    int forkY = baseLicenseY + stepY;
+                    int docY = baseLicenseY + (stepY * 2);
+                    int thanksY = baseLicenseY + (stepY * 3);
+
+                    // Fork repository
+                    var lblFork = new System.Windows.Forms.Label
+                    {
+                        Name = "lblForkTitle",
+                        Text = "Fork repository:",
+                        Font = font,
+                        Location = new System.Drawing.Point(labelX, forkY),
+                        Size = new System.Drawing.Size(labelWidth, refLabel18 != null ? refLabel18.Height : 31),
+                        TextAlign = System.Drawing.ContentAlignment.TopRight
+                    };
+                    var linkFork = new System.Windows.Forms.LinkLabel
+                    {
+                        Name = "linkForkHome",
+                        Text = "https://github.com/Streenger/tinyopds",
+                        Font = font,
+                        AutoSize = true,
+                        Location = new System.Drawing.Point(linkX, forkY)
+                    };
+                    linkFork.LinkClicked += (snd, ea) =>
+                    {
+                        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "https://github.com/Streenger/tinyopds", UseShellExecute = true }); } catch { }
+                    };
+
+                    // Documentation + Кнопка Readme
+                    var lblDoc = new System.Windows.Forms.Label
+                    {
+                        Name = "lblDocTitle",
+                        Text = "Documentation:",
+                        Font = font,
+                        Location = new System.Drawing.Point(labelX, docY),
+                        Size = new System.Drawing.Size(labelWidth, refLabel18 != null ? refLabel18.Height : 31),
+                        TextAlign = System.Drawing.ContentAlignment.TopRight
+                    };
+                    var btnReadme = new System.Windows.Forms.Button
+                    {
+                        Name = "btnOpenReadme",
+                        Text = "Readme",
+                        Font = font,
+                        AutoSize = true,
+                        Cursor = System.Windows.Forms.Cursors.Hand,
+                        Location = new System.Drawing.Point(linkX, docY - 2),
+                        Height = (refLabel18 != null ? refLabel18.Height : 24)
+                    };
+                    btnReadme.Click += (sndBtn, eaBtn) =>
+                    {
+                        try
+                        {
+                            string appDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                            string readmePath = System.IO.Path.Combine(appDir, "README.txt");
+                            if (!System.IO.File.Exists(readmePath)) readmePath = System.IO.Path.Combine(appDir, "README.md");
+                            if (!System.IO.File.Exists(readmePath)) readmePath = System.IO.Path.Combine(appDir, "RELEASE_NOTES_3.17.md");
+
+                            if (System.IO.File.Exists(readmePath))
+                            {
+                                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = readmePath, UseShellExecute = true });
+                            }
+                            else
+                            {
+                                var res = System.Windows.Forms.MessageBox.Show(
+                                    "Локальный файл README.txt не найден.\nОткрыть страницу на GitHub?",
+                                    "Readme",
+                                    System.Windows.Forms.MessageBoxButtons.YesNo,
+                                    System.Windows.Forms.MessageBoxIcon.Information);
+
+                                if (res == System.Windows.Forms.DialogResult.Yes)
+                                {
+                                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = "https://github.com/Streenger/tinyopds/blob/master/README.md", UseShellExecute = true });
+                                }
+                            }
+                        }
+                        catch { }
+                    };
+
+                    // Сдвиг блока Special thanks
+                    var lblThanks = parent.Controls["label20"];
+                    var linkThanks = parent.Controls["linkLabel6"];
+                    if (lblThanks != null) lblThanks.Location = new System.Drawing.Point(lblThanks.Location.X, thanksY);
+                    if (linkThanks != null) linkThanks.Location = new System.Drawing.Point(linkThanks.Location.X, thanksY);
+
+                    parent.Controls.Add(lblFork);
+                    parent.Controls.Add(linkFork);
+                    parent.Controls.Add(lblDoc);
+                    parent.Controls.Add(btnReadme);
+                }
+            }
+            catch { }
             scannerButton.Text = Localizer.Text((scanner.Status == FileScannerStatus.STOPPED) ? "Start scanning" : "Stop scanning");
             serverButton.Text = Localizer.Text((server == null) ? "Start server" : "Stop server");
             serverMenuItem.Text = Localizer.Text((server == null) ? "Start server" : "Stop server");
