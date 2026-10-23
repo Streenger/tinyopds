@@ -1,4 +1,4 @@
-﻿namespace TinyOPDS
+namespace TinyOPDS
 {
     partial class MainForm
     {
@@ -261,6 +261,7 @@
             // 
             // duplicates
             // 
+            this.duplicates.AutoSize = true;
             this.duplicates.Location = new System.Drawing.Point(392, 546);
             this.duplicates.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.duplicates.MinimumSize = new System.Drawing.Size(133, 0);
@@ -290,7 +291,9 @@
             // 
             // status
             // 
-            this.status.Location = new System.Drawing.Point(1053, 546);
+            this.status.AutoSize = true;
+            this.status.Location = new System.Drawing.Point(1030, 546);
+            this.status.Size = new System.Drawing.Size(340, 52);
             this.status.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.status.MinimumSize = new System.Drawing.Size(133, 0);
             this.status.Name = "status";
@@ -309,6 +312,7 @@
             // 
             // rate
             // 
+            this.rate.AutoSize = true;
             this.rate.Location = new System.Drawing.Point(1053, 475);
             this.rate.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.rate.MinimumSize = new System.Drawing.Size(133, 0);
@@ -328,6 +332,7 @@
             // 
             // elapsedTime
             // 
+            this.elapsedTime.AutoSize = true;
             this.elapsedTime.Location = new System.Drawing.Point(1053, 403);
             this.elapsedTime.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.elapsedTime.MinimumSize = new System.Drawing.Size(133, 0);
@@ -347,6 +352,7 @@
             // 
             // startTime
             // 
+            this.startTime.AutoSize = true;
             this.startTime.Location = new System.Drawing.Point(1053, 331);
             this.startTime.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.startTime.MinimumSize = new System.Drawing.Size(133, 0);
@@ -366,6 +372,7 @@
             // 
             // booksProcessed
             // 
+            this.booksProcessed.AutoSize = true;
             this.booksProcessed.Location = new System.Drawing.Point(392, 620);
             this.booksProcessed.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.booksProcessed.MinimumSize = new System.Drawing.Size(133, 0);
@@ -385,6 +392,7 @@
             // 
             // invalidBooks
             // 
+            this.invalidBooks.AutoSize = true;
             this.invalidBooks.Location = new System.Drawing.Point(392, 403);
             this.invalidBooks.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.invalidBooks.MinimumSize = new System.Drawing.Size(133, 0);
@@ -404,6 +412,7 @@
             // 
             // skippedBooks
             // 
+            this.skippedBooks.AutoSize = true;
             this.skippedBooks.Location = new System.Drawing.Point(392, 475);
             this.skippedBooks.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.skippedBooks.MinimumSize = new System.Drawing.Size(133, 0);
@@ -423,6 +432,7 @@
             // 
             // booksFound
             // 
+            this.booksFound.AutoSize = true;
             this.booksFound.Location = new System.Drawing.Point(394, 331);
             this.booksFound.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.booksFound.MinimumSize = new System.Drawing.Size(341, 0);
@@ -433,6 +443,7 @@
             // 
             // booksInDB
             // 
+            this.booksInDB.AutoSize = true;
             this.booksInDB.Location = new System.Drawing.Point(392, 253);
             this.booksInDB.Margin = new System.Windows.Forms.Padding(8, 0, 8, 0);
             this.booksInDB.MinimumSize = new System.Drawing.Size(501, 0);

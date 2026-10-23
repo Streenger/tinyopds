@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -19,6 +19,7 @@ namespace TinyOPDS
     /// </summary>
     public static class LibraryNormalizer
     {
+        public static volatile bool IsRunning = false;
         private static readonly string[] BookExtensions = { ".fb2", ".epub" };
 
         public class NormalizeResult
@@ -137,6 +138,7 @@ namespace TinyOPDS
                 return result;
             }
 
+            IsRunning = true;
             Log.WriteLine(LogLevel.Info, "LibraryNormalizer: started for \"{0}\" (keepOriginals={1})",
                 libraryPath, keepOriginals);
 

@@ -703,17 +703,24 @@ namespace TinyOPDS
                     if (watcherWasEnabled) watcher.IsEnabled = false;
 
                     scannerButton.Enabled = false;
-                    status.Text = Localizer.Text("Normalizing library...");
+                    LibraryNormalizer.IsRunning = true;
+                    status.Text = Localizer.Text("Нормализация архивов");
 
                     string normPath = libraryPath.Text.SanitizePathName();
-                    var normResult = await Task.Run(() =>
-                        LibraryNormalizer.Normalize(normPath, Settings.Default.KeepOriginals));
+                    try
+                    {
+                        var normResult = await Task.Run(() =>
+                            LibraryNormalizer.Normalize(normPath, Settings.Default.KeepOriginals));
 
-                    Log.WriteLine("LibraryNormalizer: split={0}, extracted={1}, packed={2}, errors={3}",
-                        normResult.ArchivesSplit, normResult.BooksExtracted,
-                        normResult.BooksPacked, normResult.Errors);
-
-                    scannerButton.Enabled = true;
+                        Log.WriteLine("LibraryNormalizer: split={0}, extracted={1}, packed={2}, errors={3}",
+                            normResult.ArchivesSplit, normResult.BooksExtracted,
+                            normResult.BooksPacked, normResult.Errors);
+                    }
+                    finally
+                    {
+                        LibraryNormalizer.IsRunning = false;
+                        scannerButton.Enabled = true;
+                    }
                     // Возвращаем watcher в прежнее состояние. Файлы, созданные во время паузы,
                     // не «переиграются» — их подхватит полный скан ниже.
                     if (watcherWasEnabled) watcher.IsEnabled = true;
@@ -822,7 +829,14 @@ namespace TinyOPDS
             rate.Text = (dt.TotalSeconds) > 0 ? string.Format(Localizer.Text("{0} books/min"), (int)(totalProcessed / dt.TotalSeconds * 60)) : "---";
             if (scannerButton.Enabled)
             {
+                if (LibraryNormalizer.IsRunning)
+            {
+                status.Text = Localizer.Text("Нормализация архивов");
+            }
+            else
+            {
                 status.Text = IsScanFinished ? Localizer.Text("FINISHED") : (scanner.Status == FileScannerStatus.SCANNING ? Localizer.Text("SCANNING") : Localizer.Text("STOPPED"));
+            }
                 scannerButton.Text = (scanner.Status == FileScannerStatus.SCANNING) ? Localizer.Text("Stop scanning") : Localizer.Text("Start scanning");
             }
         }
