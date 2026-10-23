@@ -130,8 +130,217 @@ namespace TinyOPDS.Data
             text = Regex.Replace(text, @"<book-title>\?[?,\s]*</book-title>", "<book-title>Неизвестная книга</book-title>", RegexOptions.IgnoreCase);
             text = StripControlChars(text, ref count);
             text = FixAmpersands(text, ref count);
+            text = StripHtmlJunk(text, ref count);
             text = EscapeStrayLt(text, ref count);
+
+            // Префикс l: используется (обычно l:href), а объявления нет
+            if (text.Contains("l:href") && !text.Contains("xmlns:l="))
+            {
+                int root = text.IndexOf("<FictionBook", StringComparison.Ordinal);
+                if (root >= 0)
+                {
+                    text = text.Insert(root + "<FictionBook".Length,
+                        " xmlns:l=\"http://www.w3.org/1999/xlink\"");
+                    count++;
+                }
+            }
+
+            // Структурная починка вложенности - только если файл всё ещё не разбирается.
+            // Корректные файлы эта ветка не затрагивает.
+            if (!IsWellFormed(text))
+            {
+                int nestFixes;
+                string balanced = BalanceTags(text, out nestFixes);
+                if (nestFixes > 0 && IsWellFormed(balanced))
+                {
+                    text = balanced;
+                    count += nestFixes;
+                }
+            }
+
             fixes = count;
+            return text;
+        }
+
+        private static bool IsWellFormed(string text)
+        {
+            try
+            {
+                var settings = new System.Xml.XmlReaderSettings
+                {
+                    DtdProcessing = System.Xml.DtdProcessing.Ignore,
+                    XmlResolver = null
+                };
+                using (var sr = new System.IO.StringReader(text))
+                using (var xr = System.Xml.XmlReader.Create(sr, settings))
+                {
+                    while (xr.Read()) { }
+                }
+                return true;
+            }
+            catch (System.Xml.XmlException) { return false; }
+        }
+
+        // --- Починка вложенности тегов --------------------------------------
+
+        private static readonly Regex TagToken = new Regex(
+            @"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<(/?)([A-Za-z_][A-Za-z0-9_:.\-]*)([^<>]*?)(/?)>",
+            RegexOptions.Singleline | RegexOptions.Compiled);
+
+        private static readonly HashSet<string> InlineTags = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "strong", "emphasis", "sub", "sup", "strikethrough", "code", "style", "a"
+        };
+
+        // Элементы с текстом внутри: один открытый в каждый момент
+        private static readonly HashSet<string> TextBlockTags = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "p", "v", "subtitle", "text-author", "th", "td"
+        };
+
+        // Пустые элементы: закрывать не нужно, даже если записаны как <image ...> без "/"
+        private static readonly HashSet<string> EmptyTags = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "empty-line", "image"
+        };
+
+        private static string CanonicalName(string name)
+        {
+            if (string.Equals(name, "FictionBook", StringComparison.OrdinalIgnoreCase)) return "FictionBook";
+            string lower = name.ToLowerInvariant();
+            return KnownTags.Contains(lower) ? lower : name;
+        }
+
+        /// <summary>
+        /// Проход по тегам со стеком: закрывает незакрытые элементы перед закрытием
+        /// родителя, выбрасывает закрывающие теги без пары, приводит имена тегов
+        /// FB2 к нижнему регистру. Текст книги не меняется.
+        /// </summary>
+        private static string BalanceTags(string text, out int fixes)
+        {
+            int local = 0;
+            var sb = new StringBuilder(text.Length + 1024);
+            var stack = new List<string>();
+            int pos = 0;
+
+            Action<int> popTo = target =>
+            {
+                while (stack.Count > target)
+                {
+                    sb.Append("</").Append(stack[stack.Count - 1]).Append('>');
+                    stack.RemoveAt(stack.Count - 1);
+                    local++;
+                }
+            };
+
+            foreach (Match m in TagToken.Matches(text))
+            {
+                sb.Append(text, pos, m.Index - pos);
+                pos = m.Index + m.Length;
+
+                // комментарий, CDATA, инструкция
+                if (!m.Groups[2].Success) { sb.Append(m.Value); continue; }
+
+                bool closing = m.Groups[1].Length > 0;
+                bool selfClosing = m.Groups[4].Length > 0;
+                string raw = m.Groups[2].Value;
+                string name = CanonicalName(raw);
+                string attrs = m.Groups[3].Value;
+                if (name != raw) local++;
+
+                if (closing)
+                {
+                    int idx = stack.LastIndexOf(name);
+                    if (idx < 0) { local++; continue; }          // закрывающий тег без пары
+
+                    // закрывающий строчный тег не должен "прорываться" через абзац или секцию
+                    if (InlineTags.Contains(name))
+                    {
+                        bool crossesBlock = false;
+                        for (int i = idx + 1; i < stack.Count; i++)
+                            if (!InlineTags.Contains(stack[i])) { crossesBlock = true; break; }
+                        if (crossesBlock) { local++; continue; }
+                    }
+
+                    popTo(idx + 1);
+                    sb.Append("</").Append(name).Append('>');
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
+                }
+
+                // открывающий тег
+                if (EmptyTags.Contains(name) || selfClosing)
+                {
+                    sb.Append('<').Append(name).Append(attrs).Append("/>");
+                    if (!selfClosing) local++;
+                    continue;
+                }
+
+                if (TextBlockTags.Contains(name))
+                {
+                    // новый абзац закрывает предыдущий (и открытые в нём выделения)
+                    int j = stack.Count;
+                    while (j > 0 && (InlineTags.Contains(stack[j - 1]) || TextBlockTags.Contains(stack[j - 1])))
+                    {
+                        // td внутри tr не закрываем абзацем: границей служит строка таблицы
+                        if (name == "p" && (stack[j - 1] == "td" || stack[j - 1] == "th")) break;
+                        j--;
+                    }
+                    popTo(j);
+                }
+                else if (name == "section" || name == "title" || name == "epigraph"
+                      || name == "poem" || name == "stanza" || name == "cite" || name == "annotation")
+                {
+                    // структурный элемент не может начинаться внутри абзаца или выделения
+                    int j = stack.Count;
+                    while (j > 0 && (InlineTags.Contains(stack[j - 1]) || TextBlockTags.Contains(stack[j - 1])))
+                        j--;
+                    // section/title/poem/stanza не могут лежать внутри title
+                    if (name == "section" || name == "title")
+                        while (j > 0 && stack[j - 1] == "title") j--;
+                    popTo(j);
+                }
+
+                sb.Append('<').Append(name).Append(attrs).Append('>');
+                stack.Add(name);
+            }
+
+            sb.Append(text, pos, text.Length - pos);
+
+            // файл оборвался или корень не закрыт
+            if (stack.Count > 0)
+            {
+                string tail = sb.ToString();
+                int tailPos = tail.TrimEnd().Length;
+                sb.Length = tailPos;
+                popTo(0);
+            }
+
+            fixes = local;
+            return sb.ToString();
+        }
+        // HTML-теги, которых нет в FB2. Удаляем тег, текст внутри остаётся.
+        // Строчные - без замены, блочные - пробелом, чтобы слова не склеивались.
+        private static readonly Regex HtmlInlineJunk = new Regex(
+            @"</?(?:b|i|u|em|font|span|tt|small|big|s|strike|nobr)(?=[\s/>]|$)[^<>]*>?",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex HtmlBlockJunk = new Regex(
+            @"</?(?:br|center|div|ul|ol|li|dl|dt|dd|hr|img|pre|blockquote|h[1-6]|meta|link)(?=[\s/>]|$)[^<>]*>?",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        // Только ВЕРХНИЙ регистр: настоящие <title> и <body> FB2 - строчные.
+        private static readonly Regex HtmlUpperJunk = new Regex(
+            @"</?(?:TITLE|BODY|HTML|HEAD|TABLE|TBODY|THEAD|TR|TD|TH)(?=[\s/>]|$)[^<>]*>?",
+            RegexOptions.Compiled);
+
+        private static string StripHtmlJunk(string text, ref int fixes)
+        {
+            int local = 0;
+            text = HtmlInlineJunk.Replace(text, m => { local++; return ""; });
+            text = HtmlBlockJunk.Replace(text, m => { local++; return " "; });
+            text = HtmlUpperJunk.Replace(text, m => { local++; return " "; });
+            fixes += local;
             return text;
         }
         private static readonly Regex NsPrefixPattern = new Regex(@"(</?\s*)[a-zA-Z0-9_-]+:", RegexOptions.Compiled);
@@ -249,6 +458,18 @@ namespace TinyOPDS.Data
                     bool closing = m.Groups[1].Length > 0;
                     if (LooksLikeTag(src, m.Index + m.Length, closing)) return m.Value;
 
+                    // Открывающий <p> с мусором вместо атрибутов, например
+                    // "<p  [-примечание > текст ...]. </p>": ниже по тексту стоит
+                    // законный </p>. Если экранировать "<p", закрывающий тег
+                    // останется без пары и файл не разберётся. Поэтому
+                    // считаем это обычным <p>, а мусор оставляем текстом абзаца.
+                    if (!closing && IsParagraphTag(name) && HasCloserBeforeNextOpener(src, m.Index + m.Length, name))
+                    {
+                        local++;
+                        return "<" + name + ">";
+                    }
+
+
                     // имя знакомое, но продолжение на тег не похоже
                     local++;
                     return "&lt;" + m.Value.Substring(1);
@@ -260,6 +481,37 @@ namespace TinyOPDS.Data
 
             fixes += local;
             return result;
+        }
+
+
+        private static bool IsParagraphTag(string name)
+        {
+            return string.Equals(name, "p", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "v", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "subtitle", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "text-author", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Есть ли после pos закрывающий &lt;/name&gt; раньше, чем следующий
+        /// открывающий &lt;name (пробел, "&gt;" или "/&gt;" после имени).
+        /// </summary>
+        private static bool HasCloserBeforeNextOpener(string s, int pos, string name)
+        {
+            int limit = Math.Min(s.Length, pos + 65536);
+            int close = s.IndexOf("</" + name, pos, limit - pos, StringComparison.OrdinalIgnoreCase);
+            if (close < 0) return false;
+
+            int open = s.IndexOf("<" + name, pos, close - pos, StringComparison.OrdinalIgnoreCase);
+            while (open >= 0)
+            {
+                int after = open + 1 + name.Length;
+                if (after >= s.Length) break;
+                char c = s[after];
+                if (c == '>' || c == '/' || IsSpace(c)) return false;
+                open = s.IndexOf("<" + name, after, close - after, StringComparison.OrdinalIgnoreCase);
+            }
+            return true;
         }
 
         // Дальше этого предела продолжение тега не ищем: настоящих
