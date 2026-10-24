@@ -77,7 +77,7 @@ namespace TinyOPDS.Scanner
                                 Book book = null;
                                 string ext = Path.GetExtension(entryFileName).ToLower();
 
-                                if (Library.Contains(ZipFileName.Substring(Library.LibraryPath.Length + 1) + "@" + entryFileName))
+                                if (Library.ContainsOrReplaced(ZipFileName.Substring(Library.LibraryPath.Length + 1) + "@" + entryFileName))
                                 {
                                     SkippedFiles++;
                                     OnFileSkipped?.Invoke(this, new FileSkippedEventArgs(SkippedFiles));

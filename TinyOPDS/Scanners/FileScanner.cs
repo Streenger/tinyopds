@@ -110,7 +110,7 @@ namespace TinyOPDS.Scanner
             // Process accepted files
             try
             {
-                if (Library.Contains(fullName.Substring(Library.LibraryPath.Length + 1)))
+                if (Library.ContainsOrReplaced(fullName.Substring(Library.LibraryPath.Length + 1)))
                 {
                     SkippedFiles++;
                     OnFileSkipped?.Invoke(this, new FileSkippedEventArgs(SkippedFiles));

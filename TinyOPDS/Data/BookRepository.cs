@@ -953,6 +953,30 @@ namespace TinyOPDS.Data
             }
         }
 
+        /// <summary>
+        /// Файл уже известен базе: в том числе если его книгу заменила более новая версия
+        /// (запись с ReplacedByID). Используется сканерами, чтобы не разбирать заново
+        /// проигравшие версии при каждом проходе.
+        /// </summary>
+        public bool BookKnown(string fileName)
+        {
+            string languageFilter = GetLanguageFilter();
+
+            if (string.IsNullOrEmpty(languageFilter))
+            {
+                var count = db.ExecuteScalar("SELECT COUNT(*) FROM Books WHERE FileName = @FileName",
+                    DatabaseManager.CreateParameter("@FileName", fileName));
+                return Convert.ToInt32(count ?? 0) > 0;
+            }
+            else
+            {
+                var count = db.ExecuteScalar("SELECT COUNT(*) FROM Books WHERE FileName = @FileName AND Language = @Language",
+                    DatabaseManager.CreateParameter("@FileName", fileName),
+                    DatabaseManager.CreateParameter("@Language", languageFilter));
+                return Convert.ToInt32(count ?? 0) > 0;
+            }
+        }
+
         #endregion
 
         #region Book Queries

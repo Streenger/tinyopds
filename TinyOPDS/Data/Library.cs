@@ -1173,6 +1173,16 @@ namespace TinyOPDS.Data
         }
 
         /// <summary>
+        /// Check if the file is already known to the library, including books that were
+        /// replaced by a newer version (such files must not be parsed again on every scan)
+        /// </summary>
+        public static bool ContainsOrReplaced(string bookPath)
+        {
+            if (bookRepository == null) return false;
+            return bookRepository.BookKnown(bookPath);
+        }
+
+        /// <summary>
         /// Get book by ID
         /// </summary>
         public static Book GetBook(string id)
