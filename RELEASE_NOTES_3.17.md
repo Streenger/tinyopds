@@ -19,6 +19,13 @@
 - **Санация проблемных заголовков и серий**: В `Fb2Sanitizer` добавлены правила удаления пустых тегов серий вида `<sequence name="" number="" />`, очистка поврежденных конструкций и подстановка резервного названия для книг с заголовками из знаков вопроса (`???`).
 - **Синхронизация версий**: Номера версий GUI и CLI синхронизированы на `3.17.0.0`.
 
+### 3. Нормализация библиотеки и защита от ложных дубликатов
+- **Починка вложенности тегов FB2**: в `Fb2Sanitizer` добавлен проход по стеку тегов (закрытие незакрытых `<p>`, `<emphasis>`, `<strong>`, `<a>`, удаление закрывающих тегов без пары, приведение тегов FB2 к нижнему регистру, удаление HTML-тегов, которых нет в FB2, с сохранением текста). Проход запускается только для файлов, которые иначе не разбираются.
+- **Повреждённые абзацы и пространства имён**: открывающий `<p>` с мусором вместо атрибутов теперь трактуется как обычный `<p>`; при использовании `l:href` без объявления `xmlns:l` оно добавляется в корневой тег.
+- **Индекс нормализованных архивов** (`normalized.index` рядом с `.exe`): неизменившиеся архивы пропускаются без распаковки. Отказы перепроверяются только при увеличении `NormalizerIndex.Version`. Для полной перепроверки удалите файл индекса. В лог добавлено поле `skipped(indexed)`.
+- **Ложные дубликаты**: книги с одинаковым `document-info/id`, но разным названием, серией и размером (разница более 25 %) получают собственный идентификатор и не перезаписывают друг друга в базе. В лог пишется `Document ID collision`.
+- **Прогон по большой библиотеке**: проверка более 250 000 архивов выполнена без новых ошибок нормализации.
+
 ---
 
 ## English Version
@@ -39,3 +46,7 @@ Upstream synchronization (3.16–3.17) with preserved extended FB2 repair toolch
   - Fixed XML parser crash caused by undeclared `xmlns:l` and `xmlns:xlink` prefixes inside the `<description>` block.
   - Fixed Cyrillic cover image extraction from ZIP archives in `CoverImage` (`Latin1` encoding support).
   - Enhanced `Fb2Sanitizer`: stripped empty sequence tags and handled question-mark placeholder titles.
+  - Added a stack-based FB2 tag nesting repair (closes unclosed `<p>`, `<emphasis>`, `<strong>`, `<a>`, drops unmatched closing tags, normalizes FB2 tag case, strips non-FB2 HTML tags while keeping text). It runs only for files that fail to parse otherwise.
+  - Malformed opening `<p>` tags with garbage instead of attributes are treated as plain `<p>`; `xmlns:l` is added when `l:href` is used without a declaration.
+  - `normalized.index` next to the executable lets the normalizer skip unchanged archives. Unrepairable archives are rechecked only when `NormalizerIndex.Version` is raised. Delete the file to force a full recheck.
+  - Books sharing a `document-info/id` but differing in title, series and size (more than 25%) get their own ID instead of replacing each other as false duplicates (`Document ID collision` warning in the log).
