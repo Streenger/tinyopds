@@ -1178,8 +1178,42 @@ namespace TinyOPDS.Data
         /// </summary>
         public static bool ContainsOrReplaced(string bookPath)
         {
+            // Во время сканирования проверка идёт по набору в памяти (без SQL на каждый файл)
+            var known = knownFiles;
+            if (known != null) return known.Contains(bookPath);
+
             if (bookRepository == null) return false;
             return bookRepository.BookKnown(bookPath);
+        }
+
+        private static volatile HashSet<string> knownFiles;
+
+        /// <summary>
+        /// Загрузить в память имена всех известных файлов (вызывать перед сканированием)
+        /// </summary>
+        public static void PreloadKnownFiles()
+        {
+            if (bookRepository == null) return;
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                knownFiles = bookRepository.LoadKnownFileNames();
+                Log.WriteLine(LogLevel.Info, "Library: preloaded {0} known file names in {1} ms",
+                    knownFiles.Count, sw.ElapsedMilliseconds);
+            }
+            catch (Exception ex)
+            {
+                knownFiles = null;
+                Log.WriteLine(LogLevel.Warning, "Library: known file names preload failed, using SQL lookups: {0}", ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Освободить набор (вызывать после сканирования)
+        /// </summary>
+        public static void ReleaseKnownFiles()
+        {
+            knownFiles = null;
         }
 
         /// <summary>

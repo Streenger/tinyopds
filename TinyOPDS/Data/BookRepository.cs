@@ -954,6 +954,31 @@ namespace TinyOPDS.Data
         }
 
         /// <summary>
+        /// Все имена файлов, известные базе (включая заменённые версии), одним запросом.
+        /// Сканер проверяет пропуск по этому набору без SQL-запроса на каждый файл.
+        /// </summary>
+        public HashSet<string> LoadKnownFileNames()
+        {
+            string languageFilter = GetLanguageFilter();
+            List<string> names;
+
+            if (string.IsNullOrEmpty(languageFilter))
+            {
+                names = db.ExecuteQuery<string>("SELECT FileName FROM Books",
+                    reader => reader.IsDBNull(0) ? string.Empty : reader.GetString(0));
+            }
+            else
+            {
+                names = db.ExecuteQuery<string>("SELECT FileName FROM Books WHERE Language = @Language",
+                    reader => reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                    DatabaseManager.CreateParameter("@Language", languageFilter));
+            }
+
+            // FileName в базе UNIQUE с бинарным сравнением - обычное порядковое сравнение строк
+            return new HashSet<string>(names, StringComparer.Ordinal);
+        }
+
+        /// <summary>
         /// Файл уже известен базе: в том числе если его книгу заменила более новая версия
         /// (запись с ReplacedByID). Используется сканерами, чтобы не разбирать заново
         /// проигравшие версии при каждом проходе.

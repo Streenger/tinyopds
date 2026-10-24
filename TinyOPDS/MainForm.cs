@@ -725,6 +725,12 @@ namespace TinyOPDS
                     // не «переиграются» — их подхватит полный скан ниже.
                     if (watcherWasEnabled) watcher.IsEnabled = true;
                 }
+                // Имена известных файлов - в память: проверка пропуска без SQL на каждый файл
+                scannerButton.Enabled = false;
+                try { await Task.Run(() => Library.PreloadKnownFiles()); }
+                finally { scannerButton.Enabled = true; }
+
+                ScanProfile.Reset();
                 scanner.Start(libraryPath.Text.SanitizePathName());
                 scannerButton.Text = Localizer.Text("Stop scanning");
 
@@ -733,6 +739,7 @@ namespace TinyOPDS
             else
             {
                 scanner.Stop();
+                Library.ReleaseKnownFiles();
                 _ = Task.Run(async () =>
                 {
                     await FlushRemainingBooksAsync();
@@ -769,9 +776,17 @@ namespace TinyOPDS
             if (Settings.Default.NormalizeLibrary) NormalizationCollector.AddBad(e.BookName);
         }
 
+        private DateTime lastSkipUiUpdate = DateTime.MinValue;
+
         private void Scanner_OnFileSkipped(object sender, FileSkippedEventArgs e)
         {
             skippedFiles = e.Count;
+
+            // Не чаще 4 раз в секунду: обновление интерфейса на каждый пропущенный файл
+            // (их сотни тысяч) только замедляет сканирование
+            var now = DateTime.UtcNow;
+            if ((now - lastSkipUiUpdate).TotalMilliseconds < 250) return;
+            lastSkipUiUpdate = now;
             UpdateInfo();
         }
 
@@ -784,6 +799,9 @@ namespace TinyOPDS
                 var mv = NormalizationCollector.MoveAll(Library.LibraryPath);
                 Log.WriteLine("Normalization: moved bad={0}, dup={1}", mv.BadMoved, mv.DupMoved);
             }
+
+            Library.ReleaseKnownFiles();
+            Log.WriteLine(ScanProfile.Summary());
 
             UpdateInfo(true);
             Log.WriteLine("Directory scanner completed");
@@ -814,6 +832,14 @@ namespace TinyOPDS
         }
 
         private void InternalUpdateInfo(bool IsScanFinished)
+        {
+            long tUi = System.Diagnostics.Stopwatch.GetTimestamp();
+            System.Threading.Interlocked.Increment(ref ScanProfile.UiCalls);
+            try { InternalUpdateInfoCore(IsScanFinished); }
+            finally { System.Threading.Interlocked.Add(ref ScanProfile.UiTicks, System.Diagnostics.Stopwatch.GetTimestamp() - tUi); }
+        }
+
+        private void InternalUpdateInfoCore(bool IsScanFinished)
         {
             var (Total, FB2, EPUB) = GetLibraryStats();
             if (Total > 0) booksInDB.Text = $"{Total}           fb2: {FB2}       epub: {EPUB}";
