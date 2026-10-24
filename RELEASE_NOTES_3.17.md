@@ -24,7 +24,9 @@
 - **Повреждённые абзацы и пространства имён**: открывающий `<p>` с мусором вместо атрибутов теперь трактуется как обычный `<p>`; при использовании `l:href` без объявления `xmlns:l` оно добавляется в корневой тег.
 - **Индекс нормализованных архивов** (`normalized.index` рядом с `.exe`): неизменившиеся архивы пропускаются без распаковки. Отказы перепроверяются только при увеличении `NormalizerIndex.Version`. Для полной перепроверки удалите файл индекса. В лог добавлено поле `skipped(indexed)`.
 - **Ложные дубликаты**: книги с одинаковым `document-info/id`, но разным названием, серией и размером (разница более 25 %) получают собственный идентификатор и не перезаписывают друг друга в базе. В лог пишется `Document ID collision`.
-- **Прогон по большой библиотеке**: проверка более 250 000 архивов выполнена без новых ошибок нормализации.
+- **Разбор FB2**: книги без `<author>` получают автора по цепочке (составитель из названия издания, автор из заголовка тела книги, `Неизвестный автор`) вместо перемещения в `libmeta/bad`; объявления `xmlns:l` и `xmlns:xlink` проверяются в теге `<description>`, а не по всему блоку.
+- **Первый прогон нормализации долгий**: индекс изначально пуст, поэтому проверяется каждый архив; на больших библиотеках это занимает несколько часов. Следите за ходом по логу (`LibraryNormalizer: …`, итог `LibraryNormalizer: done. …`). Следующие запуски пропускают обработанные архивы.
+- **Прогон по большой библиотеке**: нормализация 498 331 архива завершена без ошибок (починено 3 303 архива, 10 837 исправлений); при сканировании в `libmeta` перенесено 4 битых файла и 489 дубликатов.
 
 ---
 
@@ -50,3 +52,6 @@ Upstream synchronization (3.16–3.17) with preserved extended FB2 repair toolch
   - Malformed opening `<p>` tags with garbage instead of attributes are treated as plain `<p>`; `xmlns:l` is added when `l:href` is used without a declaration.
   - `normalized.index` next to the executable lets the normalizer skip unchanged archives. Unrepairable archives are rechecked only when `NormalizerIndex.Version` is raised. Delete the file to force a full recheck.
   - Books sharing a `document-info/id` but differing in title, series and size (more than 25%) get their own ID instead of replacing each other as false duplicates (`Document ID collision` warning in the log).
+  - FB2 parsing: books without `<author>` get an author from the compiler in the publication title, then from the body title, then `Неизвестный автор`, instead of being moved to `libmeta/bad`; `xmlns:l` and `xmlns:xlink` are checked on the `<description>` tag itself, not anywhere in the block.
+  - The first normalization run is slow: the index starts empty, so every archive is checked (hours on very large libraries). Watch the progress in the log; later runs skip processed archives.
+  - Real run: 498,331 archives normalized without errors (3,303 repaired, 10,837 fixes); the scan moved 4 bad files and 489 duplicates to `libmeta`.
