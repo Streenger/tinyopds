@@ -71,6 +71,33 @@ namespace TinyOPDS.Data
             ContentHash = null;
         }
 
+        /// <summary>
+        /// Один и тот же document-id у двух РАЗНЫХ книг (например, автор скопировал
+        /// файл серии и не сменил id). Признаки разных книг: разные ключи дубликатов
+        /// (название, автор, номер в серии) и заметно разный размер документа.
+        /// Новая редакция той же книги обычно близка по размеру, поэтому не попадает.
+        /// </summary>
+        public static bool IsIdCollision(Book a, Book b)
+        {
+            if (a == null || b == null) return false;
+            if (string.IsNullOrEmpty(a.DuplicateKey) || string.IsNullOrEmpty(b.DuplicateKey)) return false;
+            if (a.DuplicateKey == b.DuplicateKey) return false;
+            if (a.DocumentSize == 0 || b.DocumentSize == 0) return false;
+
+            double ratio = (double)Math.Min(a.DocumentSize, b.DocumentSize)
+                         / Math.Max(a.DocumentSize, b.DocumentSize);
+            return ratio < 0.75;
+        }
+
+        /// <summary>
+        /// Сбросить document-id: будет сгенерирован из имени файла, id перестаёт быть доверенным.
+        /// </summary>
+        public void ResetDocumentId()
+        {
+            ID = null;
+            ContentHash = null;
+        }
+
         private string id = string.Empty;
         public string ID
         {

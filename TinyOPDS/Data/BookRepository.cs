@@ -229,6 +229,8 @@ namespace TinyOPDS.Data
                 if (string.IsNullOrEmpty(book.DuplicateKey))
                     book.DuplicateKey = book.GenerateDuplicateKey();
 
+                ResolveIdCollisionWithDb(book);
+
                 // Check for duplicates using DuplicateDetector
                 Stream fileStream = null;
                 try
@@ -464,6 +466,19 @@ namespace TinyOPDS.Data
 
                                 // STEP 1: Check for duplicates within the current batch
                                 bool foundInBatch = false;
+
+                                // Разные книги с одинаковым document-id: даём второй собственный id,
+                                // иначе она заменит первую (в пачке или в БД)
+                                if (book.DocumentIDTrusted && !string.IsNullOrEmpty(book.ID)
+                                    && batchByDocumentID.TryGetValue(book.ID, out Book sameIdInBatch)
+                                    && Book.IsIdCollision(book, sameIdInBatch))
+                                {
+                                    Log.WriteLine(LogLevel.Warning,
+                                        "Document ID collision in batch: \"{0}\" and \"{1}\" are different books, assigning a new ID",
+                                        sameIdInBatch.FileName, book.FileName);
+                                    book.ResetDocumentId();
+                                }
+                                ResolveIdCollisionWithDb(book);
 
                                 // Check by trusted Document ID
                                 if (book.DocumentIDTrusted && !string.IsNullOrEmpty(book.ID))
@@ -2220,6 +2235,42 @@ namespace TinyOPDS.Data
         #endregion
 
         #region Helper Methods
+
+        /// <summary>
+        /// Если в БД уже есть ДРУГАЯ книга с таким же document-id, SaveBookRow перезаписал бы её
+        /// (UPDATE по ID). Тогда новой книге назначается собственный id по имени файла.
+        /// Повторное сканирование того же файла (то же FileName) не затрагивается.
+        /// </summary>
+        private void ResolveIdCollisionWithDb(Book book)
+        {
+            if (!book.DocumentIDTrusted || string.IsNullOrEmpty(book.ID)) return;
+            try
+            {
+                if (string.IsNullOrEmpty(book.DuplicateKey))
+                    book.DuplicateKey = book.GenerateDuplicateKey();
+
+                var rows = db.ExecuteQuery<Book>(DatabaseSchema.SelectBookById, MapBook,
+                    DatabaseManager.CreateParameter("@ID", book.ID));
+                foreach (var existing in rows)
+                {
+                    if (string.Equals(existing.FileName, book.FileName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (Book.IsIdCollision(book, existing))
+                    {
+                        Log.WriteLine(LogLevel.Warning,
+                            "Document ID collision: \"{0}\" and \"{1}\" are different books, assigning a new ID",
+                            existing.FileName, book.FileName);
+                        book.ResetDocumentId();
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine(LogLevel.Warning, "ResolveIdCollisionWithDb failed for {0}: {1}", book.FileName, ex.Message);
+            }
+        }
 
         /// <summary>
         /// Insert or update book row (relationships are not touched)
