@@ -91,7 +91,19 @@ namespace TinyOPDS.Parsers
 
                 if (description != null)
                 {
-                    ParseDescriptionContent(description, book, fileName);
+                    bool authorUnknown = ParseDescriptionContent(description, book, fileName);
+
+                    // Автора нет ни в title-info, ни среди составителей: в заголовке тела книги
+                    // он обычно стоит перед названием (<title><p>Автор</p><p>Название</p></title>)
+                    if (authorUnknown)
+                    {
+                        string bodyAuthor = ExtractAuthorFromBodyTitle(buffer, book.Title);
+                        if (!string.IsNullOrEmpty(bodyAuthor))
+                        {
+                            book.Authors = new List<string> { bodyAuthor };
+                            Log.WriteLine(LogLevel.Info, "Author taken from body title: \"{0}\" for {1}", bodyAuthor, fileName);
+                        }
+                    }
                 }
                 else
                 {
@@ -300,15 +312,21 @@ namespace TinyOPDS.Parsers
 
                 try
                 {
-                    if (!xmlContent.Contains("xmlns:xlink="))
+                    // Объявления ищем именно в открывающем теге <description>: объявление
+                    // xmlns:l внутри вложенного элемента (например, <p xmlns:l="..."> в аннотации)
+                    // на остальное описание (<coverpage><image l:href=...>) не распространяется.
+                    var descOpen = Regex.Match(xmlContent, @"<description(\s[^>]*)?>", RegexOptions.IgnoreCase);
+                    string descOpenTag = descOpen.Success ? descOpen.Value : string.Empty;
+
+                    if (!descOpenTag.Contains("xmlns:xlink="))
                     {
                         xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns:xlink=\"http://www.w3.org/1999/xlink\"$1", RegexOptions.IgnoreCase);
                     }
-                    if (!xmlContent.Contains("xmlns:l="))
+                    if (!descOpenTag.Contains("xmlns:l="))
                     {
                         xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns:l=\"http://www.w3.org/1999/xlink\"$1", RegexOptions.IgnoreCase);
                     }
-                    if (!xmlContent.Contains("xmlns="))
+                    if (!descOpenTag.Contains("xmlns="))
                     {
                         xmlContent = Regex.Replace(xmlContent, @"<description(\s|>)", "<description xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\"$1", RegexOptions.IgnoreCase);
                     }
@@ -480,8 +498,9 @@ namespace TinyOPDS.Parsers
             }
         }
 
-        private void ParseDescriptionContent(XElement description, Book book, string fileName)
+        private bool ParseDescriptionContent(XElement description, Book book, string fileName)
         {
+            bool authorUnknown = false;
             // Parse title-info FIRST (contains book date)
             var titleInfo = description.Element(fb2Ns + "title-info");
             if (titleInfo != null)
@@ -503,7 +522,118 @@ namespace TinyOPDS.Parsers
                 ParsePublishInfo(publishInfo, book, fileName);
             }
 
+            // Нет автора в title-info (в <document-info> автор - это создатель fb2-файла, а не книги).
+            // Без автора книга считалась бы невалидной и уходила в libmeta/bad.
+            // Берём составителя из названия издания ("... / Составитель Сергей Алдонин"),
+            // иначе - "Неизвестный автор".
+            if (book.Authors == null || book.Authors.Count == 0)
+            {
+                string compiler = ExtractCompiler(publishInfo?.Element(fb2Ns + "book-name")?.Value)
+                               ?? ExtractCompiler(description.Element(fb2Ns + "title-info")?.Element(fb2Ns + "book-title")?.Value);
+
+                book.Authors = new List<string> { compiler ?? "Неизвестный автор" };
+                authorUnknown = compiler == null;
+                Log.WriteLine(LogLevel.Info, "No author in title-info, using \"{0}\" for {1}", book.Authors[0], fileName);
+            }
+
             // NOTE: Date validation moved to EnsureValidDates() which is ALWAYS called
+            return authorUnknown;
+        }
+
+        private static readonly Regex BodyTitlePattern = new Regex(
+            @"<body[^>]*>\s*<title[^>]*>(?<t>.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex ParagraphPattern = new Regex(
+            @"<p[^>]*>(?<p>.*?)</p>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex AnyTagPattern = new Regex(@"<[^>]+>", RegexOptions.Compiled);
+
+        private static string NormalizeForCompare(string text)
+        {
+            return new string((text ?? string.Empty).Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Автор из заголовка тела книги: <title><p>[картинка]</p><p>Автор</p><p>Название</p></title>.
+        /// Берётся абзац непосредственно перед абзацем с названием книги.
+        /// </summary>
+        private string ExtractAuthorFromBodyTitle(byte[] buffer, string bookTitle)
+        {
+            try
+            {
+                string key = NormalizeForCompare(bookTitle);
+                if (key.Length == 0) return null;
+
+                Encoding encoding;
+                using (var ms = new MemoryStream(buffer))
+                {
+                    encoding = DetectStreamEncoding(ms);
+                }
+
+                // тело стоит сразу после description; читаем с запасом, бинарники лежат в конце
+                int len = Math.Min(buffer.Length, 4 * 1024 * 1024);
+                string text = encoding.GetString(buffer, 0, len);
+                int descEnd = text.IndexOf("</description>", StringComparison.OrdinalIgnoreCase);
+                if (descEnd < 0) return null;
+
+                var m = BodyTitlePattern.Match(text, descEnd);
+                if (!m.Success) return null;
+
+                var paragraphs = new List<string>();
+                foreach (Match pm in ParagraphPattern.Matches(m.Groups["t"].Value))
+                {
+                    string t = System.Net.WebUtility.HtmlDecode(AnyTagPattern.Replace(pm.Groups["p"].Value, " "));
+                    t = Regex.Replace(t, @"\s+", " ").Trim();
+                    if (t.Length > 0) paragraphs.Add(t);
+                }
+
+                for (int i = 1; i < paragraphs.Count; i++)
+                {
+                    string cmp = NormalizeForCompare(paragraphs[i]);
+                    if (cmp.Length == 0 || (!cmp.Contains(key) && !key.Contains(cmp))) continue;
+
+                    string candidate = paragraphs[i - 1];
+                    var words = candidate.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (words.Length == 0 || words.Length > 4 || candidate.Length > 60) return null;
+                    if (candidate.Any(char.IsDigit)) return null;
+                    if (candidate.IndexOf("составител", StringComparison.OrdinalIgnoreCase) >= 0) return null;
+                    if (NormalizeForCompare(candidate) == key) return null;
+
+                    var parts = words.Select(w => (w.Length > 2 ? w.TrimEnd('.') : w).Capitalize()).ToList();
+                    if (parts.Count == 2) return parts[1] + " " + parts[0];
+                    if (parts.Count == 3) return parts[2] + " " + parts[0] + " " + parts[1];
+                    return string.Join(" ", parts);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine(LogLevel.Warning, "Author lookup in body title failed: {0}", ex.Message);
+            }
+            return null;
+        }
+
+        private static readonly Regex CompilerPattern = new Regex(
+            @"(?:автор[\s\-]*)?составител[ьяи]\w*[\s:\-]+(?<name>(?-i:[А-ЯЁA-Z][\p{L}\.\-]*(?:\s+[А-ЯЁA-Z][\p{L}\.\-]*){0,2}))",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        /// <summary>
+        /// "Составитель Сергей Алдонин" -> "Алдонин Сергей" (порядок как в ParsePersonName).
+        /// </summary>
+        private static string ExtractCompiler(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            var m = CompilerPattern.Match(text);
+            if (!m.Success) return null;
+
+            var words = m.Groups["name"].Value
+                .Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(w => (w.Length > 2 ? w.TrimEnd('.') : w).Trim().Capitalize())
+                .ToList();
+            if (words.Count == 0) return null;
+
+            // Имя Фамилия -> Фамилия Имя; Имя Отчество Фамилия -> Фамилия Имя Отчество
+            if (words.Count == 2) return words[1] + " " + words[0];
+            if (words.Count == 3) return words[2] + " " + words[0] + " " + words[1];
+            return string.Join(" ", words);
         }
 
         private void ParseTitleInfo(XElement titleInfo, Book book, string fileName)
