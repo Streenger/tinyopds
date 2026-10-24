@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Xml.Linq;
 
@@ -47,25 +48,186 @@ namespace TinyOPDS.Data
 
         public static int Repair(XDocument doc)
         {
+            int light;
+            return Repair(doc, null, null, out light);
+        }
+
+        public static int Repair(XDocument doc, string idSeed, DateTime? fileDate)
+        {
+            int light;
+            return Repair(doc, idSeed, fileDate, out light);
+        }
+
+        /// <summary>
+        /// idSeed - строка, из которой строится идентификатор, если в книге его нет
+        /// (null - не трогать id). fileDate - дата для document-info/date, если своей нет
+        /// или она нечитаема (null - не трогать дату).
+        /// </summary>
+        public static int Repair(XDocument doc, string idSeed, DateTime? fileDate, out int lightFixes)
+        {
+            lightFixes = 0;
             if (doc == null || doc.Root == null) return 0;
             int fixes = 0;
 
             XElement desc = doc.Root.Element(fb + "description");
             if (desc != null)
             {
+                // "Лёгкие" правки: только недостающие id/даты и порядок элементов описания.
+                // Текст и структура книги не меняются, резервная копия для них не нужна.
+                int light = EnsureDocumentInfo(desc, idSeed, fileDate);
+                if (idSeed != null || fileDate != null) light += EnsureBookDate(desc);
+                fixes += light;
                 fixes += NormalizeGenres(desc);
                 fixes += EnsureGenre(desc);
                 fixes += FixAuthors(desc);
-                fixes += Reorder(desc.Element(fb + "title-info"), TitleInfoOrder);
-                fixes += Reorder(desc.Element(fb + "src-title-info"), TitleInfoOrder);
-                fixes += Reorder(desc.Element(fb + "document-info"), DocInfoOrder);
-                fixes += Reorder(desc.Element(fb + "publish-info"), PubInfoOrder);
+                int order = Reorder(desc.Element(fb + "title-info"), TitleInfoOrder);
+                order += Reorder(desc.Element(fb + "src-title-info"), TitleInfoOrder);
+                order += Reorder(desc.Element(fb + "document-info"), DocInfoOrder);
+                order += Reorder(desc.Element(fb + "publish-info"), PubInfoOrder);
+                fixes += order;
+                lightFixes = light + order;
             }
 
             fixes += FixBinaryIds(doc);
             fixes += LiftBlocksFromParagraphs(doc);
             fixes += CleanBodyChildren(doc);
             return fixes;
+        }
+
+        // --- метаданные документа ----------------------------------------------
+
+        /// <summary>
+        /// document-info обязателен по схеме и должен содержать author, date, id, version.
+        /// Недостающее добавляется: id строится из idSeed (UUID v5), дата берётся из fileDate.
+        /// Существующие корректные значения не меняются.
+        /// </summary>
+        private static int EnsureDocumentInfo(XElement desc, string idSeed, DateTime? fileDate)
+        {
+            if (idSeed == null && fileDate == null) return 0;
+            int fixes = 0;
+
+            XElement info = desc.Element(fb + "document-info");
+            if (info == null)
+            {
+                info = new XElement(fb + "document-info");
+                XElement after = desc.Elements(fb + "src-title-info").LastOrDefault()
+                              ?? desc.Elements(fb + "title-info").LastOrDefault();
+                if (after != null) after.AddAfterSelf(info);
+                else desc.AddFirst(info);
+                fixes++;
+            }
+
+            if (idSeed != null)
+            {
+                XElement id = info.Element(fb + "id");
+                string value = id == null ? null : id.Value.Trim();
+                if (string.IsNullOrEmpty(value))
+                {
+                    string guid = Utils.CreateGuid(Utils.IsoOidNamespace, idSeed).ToString();
+                    if (id == null) info.Add(new XElement(fb + "id", guid));
+                    else { id.RemoveNodes(); id.Value = guid; }
+                    fixes++;
+                }
+            }
+
+            if (fileDate != null)
+            {
+                XElement date = info.Element(fb + "date");
+                if (date == null || !IsReadableDate(date))
+                {
+                    string iso = fileDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    XElement fresh = new XElement(fb + "date", new XAttribute("value", iso), iso);
+                    if (date == null) info.Add(fresh); else date.ReplaceWith(fresh);
+                    fixes++;
+                }
+            }
+
+            // Обязательные author и version добавляем только если их нет вовсе
+            if (info.Element(fb + "author") == null)
+            {
+                info.Add(new XElement(fb + "author", new XElement(fb + "nickname", "unknown")));
+                fixes++;
+            }
+            if (info.Element(fb + "version") == null)
+            {
+                info.Add(new XElement(fb + "version", "1.0"));
+                fixes++;
+            }
+            return fixes;
+        }
+
+        /// <summary>
+        /// Если в title-info нет читаемой даты книги, а в publish-info есть правдоподобный год,
+        /// записываем дату из года - так же, как это делает парсер при сканировании.
+        /// Если года издания нет - ставится текущая дата (внесение в библиотеку).
+        /// Текстовая дата без атрибута value (например "конец XVI века") сохраняется,
+        /// добавляется только value.
+        /// </summary>
+        private static int EnsureBookDate(XElement desc)
+        {
+            XElement title = desc.Element(fb + "title-info");
+            if (title == null) return 0;
+
+            XElement date = title.Element(fb + "date");
+            if (date != null && IsReadableDate(date)) return 0;
+
+            XElement year = desc.Element(fb + "publish-info") == null
+                ? null : desc.Element(fb + "publish-info").Element(fb + "year");
+            int y;
+            if (year == null || !int.TryParse(year.Value.Trim(), NumberStyles.None,
+                    CultureInfo.InvariantCulture, out y) || y <= 1800 || y > DateTime.Now.Year)
+            {
+                // Года издания нет: ставим текущую дату (дата внесения книги в библиотеку)
+                string today = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                if (date == null)
+                {
+                    title.Add(new XElement(fb + "date", new XAttribute("value", today), today));
+                }
+                else
+                {
+                    bool hasText2 = date.Value.Trim().Length > 0;
+                    date.SetAttributeValue("value", today);
+                    if (!hasText2) date.Value = today;
+                }
+                return 1;
+            }
+
+            string iso = y.ToString("0000", CultureInfo.InvariantCulture) + "-01-01";
+            if (date == null)
+            {
+                XElement fresh = new XElement(fb + "date", new XAttribute("value", iso),
+                    y.ToString(CultureInfo.InvariantCulture));
+                // место по схеме определит Reorder
+                title.Add(fresh);
+            }
+            else
+            {
+                bool hasText = date.Value.Trim().Length > 0;
+                date.SetAttributeValue("value", iso);
+                if (!hasText) date.Value = y.ToString(CultureInfo.InvariantCulture);
+            }
+            return 1;
+        }
+
+        // Дата читаема, если value или текст разбираются и год в разумных пределах
+        private static bool IsReadableDate(XElement date)
+        {
+            string[] candidates = { (string)date.Attribute("value"), date.Value };
+            foreach (string c in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(c)) continue;
+                DateTime d;
+                if ((DateTime.TryParse(c.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out d)
+                  || DateTime.TryParse(c.Trim(), new CultureInfo("ru-RU"), DateTimeStyles.None, out d))
+                    && d.Year >= 1800 && d.Year <= DateTime.Now.Year + 10)
+                    return true;
+
+                // просто год ("1985") или дата вида "лето 1985"
+                System.Text.RegularExpressions.Match m =
+                    System.Text.RegularExpressions.Regex.Match(c, @"(?<!\d)(1[89]\d\d|20\d\d)(?!\d)");
+                if (m.Success && int.Parse(m.Value) <= DateTime.Now.Year + 10) return true;
+            }
+            return false;
         }
 
         // --- порядок элементов -------------------------------------------------

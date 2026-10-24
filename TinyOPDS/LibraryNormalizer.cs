@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -396,6 +396,7 @@ namespace TinyOPDS
             var payload = new List<Tuple<string, byte[], DateTimeOffset>>();
             int fixesHere = 0;
             bool changed = false;
+            bool heavyChange = false;   // были правки содержимого, а не только id/дат
             bool anyUnrepairable = false;
 
             using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
@@ -417,13 +418,17 @@ namespace TinyOPDS
                     {
                         int fixes;
                         bool unrepairable;
-                        byte[] repaired = RepairFb2Bytes(data, zipPath, out fixes, out unrepairable);
+                        bool lightOnly;
+                        byte[] repaired = RepairFb2Bytes(data, zipPath,
+                            zipPath + "@" + FixEntryName(entry.FullName),
+                            entry.LastWriteTime.DateTime, out fixes, out lightOnly, out unrepairable);
                         if (unrepairable) anyUnrepairable = true;
                         if (repaired != null && fixes > 0)
                         {
                             data = repaired;
                             fixesHere += fixes;
                             changed = true;
+                            if (!lightOnly) heavyChange = true;
                         }
                     }
 
@@ -436,8 +441,9 @@ namespace TinyOPDS
             if (!changed)
                 return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Clean;
 
-            // резервная копия до правки
-            if (keepOriginals)
+            // резервная копия до правки: только для содержательных правок.
+            // Дописанные id и даты (и перестановка элементов описания) текст книги не меняют
+            if (keepOriginals && heavyChange)
             {
                 try
                 {
@@ -491,7 +497,8 @@ namespace TinyOPDS
             result.BooksRepaired++;
             result.RepairFixes += fixesHere;
             Log.WriteLine(LogLevel.Info,
-                "LibraryNormalizer: fb2 repaired ({0} fixes) \"{1}\"", fixesHere, zipPath);
+                "LibraryNormalizer: fb2 repaired ({0} fixes{2}) \"{1}\"", fixesHere, zipPath,
+                heavyChange ? "" : ", metadata only, no backup");
 
             return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired;
         }
@@ -500,10 +507,11 @@ namespace TinyOPDS
         /// Чинит один fb2 в памяти. Возвращает null, если правок не было
         /// или файл не удалось разобрать. Кодировка исходника сохраняется.
         /// </summary>
-        private static byte[] RepairFb2Bytes(byte[] data, string sourceForLog, out int fixes,
-            out bool unrepairable)
+        private static byte[] RepairFb2Bytes(byte[] data, string sourceForLog, string idSeed,
+            DateTime fileDate, out int fixes, out bool lightOnly, out bool unrepairable)
         {
             fixes = 0;
+            lightOnly = false;
             unrepairable = false;
             XDocument doc = null;
             int sanitizeFixes = 0;
@@ -558,7 +566,8 @@ namespace TinyOPDS
             }
 
             int repairFixes = 0;
-            try { repairFixes = Fb2Repair.Repair(doc); }
+            int lightFixes = 0;
+            try { repairFixes = Fb2Repair.Repair(doc, idSeed, fileDate, out lightFixes); }
             catch (Exception e)
             {
                 Log.WriteLine(LogLevel.Warning,
@@ -569,6 +578,7 @@ namespace TinyOPDS
 
             fixes = sanitizeFixes + repairFixes;
             if (fixes == 0) return null;
+            lightOnly = sanitizeFixes == 0 && repairFixes == lightFixes;
 
             // КРИТИЧНО: писать в той же кодировке, что была в декларации,
             // иначе windows-1251 превратится в мусор
@@ -601,7 +611,11 @@ namespace TinyOPDS
     internal sealed class NormalizerIndex
     {
         /// <summary>Версия логики починки. Увеличивать при улучшении Fb2Sanitizer/Fb2Repair.</summary>
-        public const int Version = 1;
+        public const int Version = 2;
+
+        // Записи Clean/Repaired с версией ниже этой перепроверяются: версия 2 начала
+        // записывать в книги id документа и даты (document-info и дата книги по году издания)
+        public const int MinCleanVersion = 2;
         public const int SaveEvery = 500;
         private const string Header = "# TinyOPDS normalizer index v1";
 
@@ -687,6 +701,7 @@ namespace TinyOPDS
 
             // отказ перепроверяем после улучшения логики починки
             if (e.Status == Status.Unrepairable && e.Version < Version) return false;
+            if (e.Status != Status.Unrepairable && e.Version < MinCleanVersion) return false;
 
             var fi = new FileInfo(zipPath);
             return fi.Exists && fi.Length == e.Length && fi.LastWriteTimeUtc.Ticks == e.Ticks;
