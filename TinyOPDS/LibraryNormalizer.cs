@@ -32,6 +32,7 @@ namespace TinyOPDS
             public int Errors;
             public int BooksRepaired;      // ← ДОБАВИТЬ
             public int RepairFixes;        // ← ДОБАВИТЬ
+            public int ArchivesSkippedIndexed; // пропущено по индексу уже нормализованных
             public List<string> Messages = new List<string>();
         }
 
@@ -198,12 +199,34 @@ namespace TinyOPDS
             // --- Проход C: починка нарушений схемы FB2 ---
             if (repairFb2)
             {
+                var index = NormalizerIndex.Load(libraryPath);
+                int sinceSave = 0;
+
                 foreach (string zipPath in Directory
                     .EnumerateFiles(libraryPath, "*.zip", SearchOption.AllDirectories).ToList())
                 {
                     try
                     {
-                        RepairSingleArchive(zipPath, libraryPath, keepOriginals, result);
+                        // Уже нормализован и не менялся - не читаем архив вовсе
+                        if (index.IsUpToDate(zipPath))
+                        {
+                            result.ArchivesSkippedIndexed++;
+                            continue;
+                        }
+
+                        NormalizerIndex.Status status =
+                            RepairSingleArchive(zipPath, libraryPath, keepOriginals, result);
+
+                        // Failed не записываем: при следующем запуске попробуем снова
+                        if (status != NormalizerIndex.Status.Failed)
+                        {
+                            index.Record(zipPath, status);
+                            if (++sinceSave >= NormalizerIndex.SaveEvery)
+                            {
+                                index.Save();
+                                sinceSave = 0;
+                            }
+                        }
                     }
                     catch (Exception e)
                     {
@@ -212,12 +235,14 @@ namespace TinyOPDS
                             "LibraryNormalizer: repair failed \"{0}\": {1}", zipPath, e.Message);
                     }
                 }
+
+                index.Save();
             }
             Log.WriteLine(LogLevel.Info,
-    "LibraryNormalizer: done. scanned={0}, split={1}, extracted={2}, loose={3}, packed={4}, repaired={5}, fixes={6}, errors={7}",
+    "LibraryNormalizer: done. scanned={0}, split={1}, extracted={2}, loose={3}, packed={4}, repaired={5}, fixes={6}, skipped(indexed)={7}, errors={8}",
     result.ArchivesScanned, result.ArchivesSplit, result.BooksExtracted,
     result.LooseBooksScanned, result.BooksPacked,
-    result.BooksRepaired, result.RepairFixes, result.Errors);
+    result.BooksRepaired, result.RepairFixes, result.ArchivesSkippedIndexed, result.Errors);
 
             return result;
         }
@@ -365,12 +390,13 @@ namespace TinyOPDS
         /// Проход C: починка нарушений схемы FB2 внутри архивов.
         /// Архив перезаписывается только если реально были правки.
         /// </summary>
-        private static void RepairSingleArchive(string zipPath, string libraryPath,
+        private static NormalizerIndex.Status RepairSingleArchive(string zipPath, string libraryPath,
             bool keepOriginals, NormalizeResult result)
         {
             var payload = new List<Tuple<string, byte[], DateTimeOffset>>();
             int fixesHere = 0;
             bool changed = false;
+            bool anyUnrepairable = false;
 
             using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
             {
@@ -390,7 +416,9 @@ namespace TinyOPDS
                             StringComparison.OrdinalIgnoreCase))
                     {
                         int fixes;
-                        byte[] repaired = RepairFb2Bytes(data, zipPath, out fixes);
+                        bool unrepairable;
+                        byte[] repaired = RepairFb2Bytes(data, zipPath, out fixes, out unrepairable);
+                        if (unrepairable) anyUnrepairable = true;
                         if (repaired != null && fixes > 0)
                         {
                             data = repaired;
@@ -405,7 +433,8 @@ namespace TinyOPDS
                 }
             }   // архив закрыт
 
-            if (!changed) return;
+            if (!changed)
+                return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Clean;
 
             // резервная копия до правки
             if (keepOriginals)
@@ -456,22 +485,26 @@ namespace TinyOPDS
                 Log.WriteLine(LogLevel.Error,
                     "LibraryNormalizer: repack after repair failed \"{0}\": {1}", zipPath, e.Message);
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                return;
+                return NormalizerIndex.Status.Failed;
             }
 
             result.BooksRepaired++;
             result.RepairFixes += fixesHere;
             Log.WriteLine(LogLevel.Info,
                 "LibraryNormalizer: fb2 repaired ({0} fixes) \"{1}\"", fixesHere, zipPath);
+
+            return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired;
         }
 
         /// <summary>
         /// Чинит один fb2 в памяти. Возвращает null, если правок не было
         /// или файл не удалось разобрать. Кодировка исходника сохраняется.
         /// </summary>
-        private static byte[] RepairFb2Bytes(byte[] data, string sourceForLog, out int fixes)
+        private static byte[] RepairFb2Bytes(byte[] data, string sourceForLog, out int fixes,
+            out bool unrepairable)
         {
             fixes = 0;
+            unrepairable = false;
             XDocument doc = null;
             int sanitizeFixes = 0;
 
@@ -493,6 +526,7 @@ namespace TinyOPDS
                 {
                     Log.WriteLine(LogLevel.Warning,
                         "LibraryNormalizer: sanitize threw \"{0}\": {1}", sourceForLog, e.Message);
+                    unrepairable = true;
                     return null;
                 }
 
@@ -501,6 +535,7 @@ namespace TinyOPDS
                     Log.WriteLine(LogLevel.Warning,
                         "LibraryNormalizer: fb2 parse failed, nothing to sanitize \"{0}\": {1}",
                         sourceForLog, firstError.Message);
+                    unrepairable = true;
                     return null;
                 }
 
@@ -513,6 +548,7 @@ namespace TinyOPDS
                     Log.WriteLine(LogLevel.Warning,
                         "LibraryNormalizer: sanitize insufficient ({0} fixed), repair skipped \"{1}\": {2}",
                         sanitizeFixes, sourceForLog, secondError.Message);
+                    unrepairable = true;
                     return null;
                 }
 
@@ -527,6 +563,7 @@ namespace TinyOPDS
             {
                 Log.WriteLine(LogLevel.Warning,
                     "LibraryNormalizer: repair threw \"{0}\": {1}", sourceForLog, e.Message);
+                unrepairable = true;
                 return null;
             }
 
@@ -551,6 +588,146 @@ namespace TinyOPDS
                 using (var w = XmlWriter.Create(outMs, ws))
                     doc.Save(w);
                 return outMs.ToArray();
+            }
+        }
+    }
+    /// <summary>
+    /// Индекс уже нормализованных архивов. Хранится рядом с исполняемым файлом
+    /// (normalized.index), саму библиотеку не изменяет. Архив пропускается, если
+    /// размер и время изменения не изменились с момента записи. Исход Unrepairable
+    /// перепроверяется только после увеличения Version (улучшения санитайзера).
+    /// Файл можно удалить - тогда будут проверены все архивы.
+    /// </summary>
+    internal sealed class NormalizerIndex
+    {
+        /// <summary>Версия логики починки. Увеличивать при улучшении Fb2Sanitizer/Fb2Repair.</summary>
+        public const int Version = 1;
+        public const int SaveEvery = 500;
+        private const string Header = "# TinyOPDS normalizer index v1";
+
+        public enum Status { Clean = 'O', Repaired = 'R', Unrepairable = 'U', Failed = 'F' }
+
+        private struct Entry
+        {
+            public Status Status;
+            public int Version;
+            public long Length;
+            public long Ticks;
+        }
+
+        private readonly string root;
+        private readonly string path;
+        private readonly Dictionary<string, Entry> items =
+            new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
+        private bool dirty;
+
+        public static string IndexPath
+        {
+            get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "normalized.index"); }
+        }
+
+        private NormalizerIndex(string libraryPath)
+        {
+            root = libraryPath.TrimEnd('\\', '/');
+            path = IndexPath;
+        }
+
+        private string Key(string zipPath)
+        {
+            if (zipPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                && zipPath.Length > root.Length + 1)
+                return zipPath.Substring(root.Length + 1);
+            return zipPath;
+        }
+
+        public static NormalizerIndex Load(string libraryPath)
+        {
+            var idx = new NormalizerIndex(libraryPath);
+            try
+            {
+                if (!File.Exists(idx.path)) return idx;
+
+                string[] lines = File.ReadAllLines(idx.path, Encoding.UTF8);
+                // строка 1 - заголовок, строка 2 - корень библиотеки
+                if (lines.Length < 2 || lines[0] != Header || !lines[1].StartsWith("library="))
+                    return idx;
+                if (!string.Equals(lines[1].Substring("library=".Length), idx.root,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    Log.WriteLine(LogLevel.Info,
+                        "LibraryNormalizer: index belongs to another library, starting a new one");
+                    return idx;
+                }
+
+                for (int i = 2; i < lines.Length; i++)
+                {
+                    string[] f = lines[i].Split('\t');
+                    if (f.Length != 5 || f[0].Length != 1) continue;
+                    var e = new Entry();
+                    e.Status = (Status)f[0][0];
+                    if (!int.TryParse(f[1], out e.Version)) continue;
+                    if (!long.TryParse(f[2], out e.Length)) continue;
+                    if (!long.TryParse(f[3], out e.Ticks)) continue;
+                    idx.items[f[4]] = e;
+                }
+                Log.WriteLine(LogLevel.Info, "LibraryNormalizer: index loaded, {0} archives", idx.items.Count);
+            }
+            catch (Exception e)
+            {
+                Log.WriteLine(LogLevel.Warning, "LibraryNormalizer: index load failed: {0}", e.Message);
+                idx.items.Clear();
+            }
+            return idx;
+        }
+
+        public bool IsUpToDate(string zipPath)
+        {
+            Entry e;
+            if (!items.TryGetValue(Key(zipPath), out e)) return false;
+
+            // отказ перепроверяем после улучшения логики починки
+            if (e.Status == Status.Unrepairable && e.Version < Version) return false;
+
+            var fi = new FileInfo(zipPath);
+            return fi.Exists && fi.Length == e.Length && fi.LastWriteTimeUtc.Ticks == e.Ticks;
+        }
+
+        public void Record(string zipPath, Status status)
+        {
+            var fi = new FileInfo(zipPath);
+            if (!fi.Exists) return;      // архив ушёл (например, разложен и перемещён)
+            items[Key(zipPath)] = new Entry
+            {
+                Status = status,
+                Version = Version,
+                Length = fi.Length,
+                Ticks = fi.LastWriteTimeUtc.Ticks
+            };
+            dirty = true;
+        }
+
+        public void Save()
+        {
+            if (!dirty) return;
+            string tmp = path + ".tmp";
+            try
+            {
+                using (var w = new StreamWriter(tmp, false, new UTF8Encoding(false)))
+                {
+                    w.WriteLine(Header);
+                    w.WriteLine("library=" + root);
+                    foreach (var kv in items)
+                        w.WriteLine("{0}\t{1}\t{2}\t{3}\t{4}",
+                            (char)kv.Value.Status, kv.Value.Version, kv.Value.Length, kv.Value.Ticks, kv.Key);
+                }
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tmp, path);
+                dirty = false;
+            }
+            catch (Exception e)
+            {
+                Log.WriteLine(LogLevel.Warning, "LibraryNormalizer: index save failed: {0}", e.Message);
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
             }
         }
     }
