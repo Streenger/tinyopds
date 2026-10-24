@@ -50,24 +50,32 @@ namespace TinyOPDS.Parsers
             try
             {
                 byte[] buffer;
+                long tProf = TinyOPDS.Scanner.ScanProfile.Now();
                 using (var ms = new MemoryStream())
                 {
                     stream.CopyTo(ms);
                     buffer = ms.ToArray();
                 }
+                TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2CopyTicks, tProf);
 
                 XElement description = null;
 
                 // Первая попытка: читаем как есть
+                tProf = TinyOPDS.Scanner.ScanProfile.Now();
                 try
                 {
                     using (var testStream = new MemoryStream(buffer))
                     {
                         description = ReadDescriptionBlock(testStream, fileName);
                     }
+                    TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2FirstReadTicks, tProf);
                 }
                 catch
                 {
+                    TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2FirstReadTicks, tProf);
+                    tProf = TinyOPDS.Scanner.ScanProfile.Now();
+                    System.Threading.Interlocked.Increment(ref TinyOPDS.Scanner.ScanProfile.Fb2SanitizeCount);
+
                     // Если упало — сразу чистим буфер через санитайзер (убираем ns0:, чиним теги)
                     string raw = Fb2Sanitizer.BytesToText(buffer);
                     int fixes;
@@ -78,26 +86,34 @@ namespace TinyOPDS.Parsers
                     {
                         Log.WriteLine(LogLevel.Info, "FB2Parser: auto-sanitized {0} ({1} fixes)", fileName, fixes);
                     }
+                    TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2SanitizeTicks, tProf);
                 }
 
                 // Вторая попытка: читаем из очищенного буфера (если первая не удалась)
                 if (description == null)
                 {
+                    tProf = TinyOPDS.Scanner.ScanProfile.Now();
                     using (var cleanStream = new MemoryStream(buffer))
                     {
                         description = ReadDescriptionBlock(cleanStream, fileName);
                     }
+                    TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2SecondReadTicks, tProf);
                 }
 
                 if (description != null)
                 {
+                    tProf = TinyOPDS.Scanner.ScanProfile.Now();
                     bool authorUnknown = ParseDescriptionContent(description, book, fileName);
+                    TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2DescTicks, tProf);
 
                     // Автора нет ни в title-info, ни среди составителей: в заголовке тела книги
                     // он обычно стоит перед названием (<title><p>Автор</p><p>Название</p></title>)
                     if (authorUnknown)
                     {
+                        tProf = TinyOPDS.Scanner.ScanProfile.Now();
+                        System.Threading.Interlocked.Increment(ref TinyOPDS.Scanner.ScanProfile.Fb2BodyAuthorCount);
                         string bodyAuthor = ExtractAuthorFromBodyTitle(buffer, book.Title);
+                        TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2BodyAuthorTicks, tProf);
                         if (!string.IsNullOrEmpty(bodyAuthor))
                         {
                             book.Authors = new List<string> { bodyAuthor };
@@ -115,7 +131,9 @@ namespace TinyOPDS.Parsers
                 Log.WriteLine(LogLevel.Error, "Book.Parse() exception {0} on file: {1}", e.Message, fileName);
             }
 
+            long tDates = TinyOPDS.Scanner.ScanProfile.Now();
             EnsureValidDates(book, fileName);
+            TinyOPDS.Scanner.ScanProfile.Since(ref TinyOPDS.Scanner.ScanProfile.Fb2DatesTicks, tDates);
 
             return book;
         }
