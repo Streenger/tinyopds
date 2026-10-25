@@ -32,11 +32,43 @@ namespace TinyOPDS.Scanner
         public static long Archives, Entries, Skipped, Parsed, UiCalls;
         private static long startTimestamp;
 
+        // Распаковка записи архива в память (отдельно от разбора)
+        public static long ReadTicks;
+
+        // Внутри FB2Parser.Parse
+        public static long Fb2CopyTicks, Fb2FirstReadTicks, Fb2SanitizeTicks, Fb2SecondReadTicks,
+            Fb2DescTicks, Fb2BodyAuthorTicks, Fb2DatesTicks;
+        public static long Fb2SanitizeCount, Fb2BodyAuthorCount;
+
+        public static long Now()
+        {
+            return Stopwatch.GetTimestamp();
+        }
+
+        public static void Since(ref long field, long start)
+        {
+            Interlocked.Add(ref field, Stopwatch.GetTimestamp() - start);
+        }
+
         public static void Reset()
         {
-            OpenTicks = NameTicks = KnownTicks = ParseTicks = EventTicks = UiTicks = 0;
+            OpenTicks = NameTicks = KnownTicks = ParseTicks = EventTicks = UiTicks = ReadTicks = 0;
             Archives = Entries = Skipped = Parsed = UiCalls = 0;
+            Fb2CopyTicks = Fb2FirstReadTicks = Fb2SanitizeTicks = Fb2SecondReadTicks = 0;
+            Fb2DescTicks = Fb2BodyAuthorTicks = Fb2DatesTicks = 0;
+            Fb2SanitizeCount = Fb2BodyAuthorCount = 0;
             startTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        public static string SummaryFb2()
+        {
+            return string.Format(
+                "Scan profile (read/parse of {0} books): unpack entry {1:F0} ms, Parse() call {2:F0} ms; inside Parse: " +
+                "copy to buffer {3:F0} ms, first description read {4:F0} ms, sanitize {5:F0} ms ({6} files), " +
+                "second read {7:F0} ms, description parse {8:F0} ms, body author {9:F0} ms ({10} files), dates/log {11:F0} ms",
+                Parsed, Ms(ReadTicks), Ms(ParseTicks),
+                Ms(Fb2CopyTicks), Ms(Fb2FirstReadTicks), Ms(Fb2SanitizeTicks), Fb2SanitizeCount,
+                Ms(Fb2SecondReadTicks), Ms(Fb2DescTicks), Ms(Fb2BodyAuthorTicks), Fb2BodyAuthorCount, Ms(Fb2DatesTicks));
         }
 
         private static double Ms(long ticks)
@@ -159,7 +191,10 @@ namespace TinyOPDS.Scanner
                                     {
                                         entryStream.CopyTo(memStream);
                                         memStream.Position = 0;
+                                        long tCall = Stopwatch.GetTimestamp();
+                                        Interlocked.Add(ref ScanProfile.ReadTicks, tCall - tParse);
                                         book = new FB2Parser().Parse(memStream, ZipFileName + "@" + entryFileName);
+                                        Interlocked.Add(ref ScanProfile.ParseTicks, Stopwatch.GetTimestamp() - tCall);
 
                                         // Ensure correct DocumentSize for archive entries
                                         if (book != null)
@@ -167,7 +202,6 @@ namespace TinyOPDS.Scanner
                                             book.DocumentSize = (uint)entry.Length;
                                         }
                                     }
-                                    Interlocked.Add(ref ScanProfile.ParseTicks, Stopwatch.GetTimestamp() - tParse);
                                 }
 
                                 if (book != null)
