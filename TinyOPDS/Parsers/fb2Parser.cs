@@ -184,6 +184,34 @@ namespace TinyOPDS.Parsers
             }
         }
 
+        /// <summary>
+        /// Возвращает начало файла по </description> включительно с искусственно закрытым корнем,
+        /// чтобы получился самостоятельный well-formed документ. Если описание не найдено
+        /// или после него почти ничего нет - возвращает текст как есть.
+        /// </summary>
+        private static string DescriptionHead(string raw)
+        {
+            int len = 14;
+            int ci = raw.IndexOf("</description>", StringComparison.OrdinalIgnoreCase);
+            if (ci < 0)
+            {
+                ci = raw.IndexOf("</ns0:description>", StringComparison.OrdinalIgnoreCase);
+                len = 18;
+            }
+            if (ci <= 0) return raw;
+
+            int end = ci + len;
+            if (raw.Length - end < 64) return raw;
+
+            var m = System.Text.RegularExpressions.Regex.Match(
+                raw.Substring(0, Math.Min(end, 4096)),
+                @"<((?:[A-Za-z0-9_]+:)?)FictionBook\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) return raw;
+
+            return raw.Substring(0, end) + "\n</" + m.Groups[1].Value + "FictionBook>";
+        }
+
         private XElement ReadDescriptionBlock(
             Stream stream,
             string fileName)
@@ -205,7 +233,9 @@ namespace TinyOPDS.Parsers
 
                         string raw = Fb2Sanitizer.BytesToText(buffer);
                         int fixes;
-                        string clean = Fb2Sanitizer.Sanitize(raw, out fixes);
+                        // Дальше читается только <description>, поэтому санитайзеру достаточно
+                        // начала файла до </description>, а не всей книги целиком
+                        string clean = Fb2Sanitizer.Sanitize(DescriptionHead(raw), out fixes);
 
                         if (fixes > 0)
                         {

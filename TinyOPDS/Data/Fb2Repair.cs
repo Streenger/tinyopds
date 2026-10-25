@@ -76,6 +76,7 @@ namespace TinyOPDS.Data
                 // Текст и структура книги не меняются, резервная копия для них не нужна.
                 int light = EnsureDocumentInfo(desc, idSeed, fileDate);
                 if (idSeed != null || fileDate != null) light += EnsureBookDate(desc);
+                light += RemoveHtmlBreaks(desc);
                 fixes += light;
                 fixes += NormalizeGenres(desc);
                 fixes += EnsureGenre(desc);
@@ -92,6 +93,23 @@ namespace TinyOPDS.Data
             fixes += LiftBlocksFromParagraphs(doc);
             fixes += CleanBodyChildren(doc);
             return fixes;
+        }
+
+        // --- мусор в описании ----------------------------------------------------
+
+        /// <summary>
+        /// Элементов br в FB2 нет, но в аннотациях они встречаются между абзацами
+        /// (&lt;p&gt;..&lt;/p&gt;&lt;br /&gt;&lt;p&gt;..&lt;/p&gt;). Убираем пустые br из описания:
+        /// на смысл текста это не влияет, зато файл становится корректным по схеме.
+        /// </summary>
+        private static int RemoveHtmlBreaks(XElement desc)
+        {
+            var breaks = desc.Descendants()
+                .Where(e => string.Equals(e.Name.LocalName, "br", StringComparison.OrdinalIgnoreCase)
+                            && !e.HasElements && e.Value.Trim().Length == 0)
+                .ToList();
+            foreach (var br in breaks) br.Remove();
+            return breaks.Count;
         }
 
         // --- метаданные документа ----------------------------------------------
