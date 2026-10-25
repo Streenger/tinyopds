@@ -64,7 +64,7 @@ namespace TinyOPDS.Parsers
                 tProf = TinyOPDS.Scanner.ScanProfile.Now();
                 try
                 {
-                    using (var testStream = new MemoryStream(buffer))
+                    using (var testStream = new MemoryStream(buffer, 0, buffer.Length, false, true))
                     {
                         description = ReadDescriptionBlock(testStream, fileName);
                     }
@@ -93,7 +93,7 @@ namespace TinyOPDS.Parsers
                 if (description == null)
                 {
                     tProf = TinyOPDS.Scanner.ScanProfile.Now();
-                    using (var cleanStream = new MemoryStream(buffer))
+                    using (var cleanStream = new MemoryStream(buffer, 0, buffer.Length, false, true))
                     {
                         description = ReadDescriptionBlock(cleanStream, fileName);
                     }
@@ -212,6 +212,64 @@ namespace TinyOPDS.Parsers
             return raw.Substring(0, end) + "\n</" + m.Groups[1].Value + "FictionBook>";
         }
 
+        /// <summary>
+        /// То же, что DescriptionHead, но без декодирования всего файла: конец описания
+        /// ищется по байтам (работает для UTF-8 и однобайтовых кодировок). Возвращает null,
+        /// если так сделать нельзя (UTF-16, описание не найдено) - тогда работает обычный путь.
+        /// </summary>
+        private static string DescriptionHeadFromBytes(byte[] data)
+        {
+            if (data == null || data.Length < 128) return null;
+            if ((data[0] == 0xFF && data[1] == 0xFE) || (data[0] == 0xFE && data[1] == 0xFF)) return null;
+
+            int len = 14;
+            int ci = IndexOfAscii(data, "</description>");
+            if (ci < 0)
+            {
+                ci = IndexOfAscii(data, "</ns0:description>");
+                len = 18;
+            }
+            if (ci <= 0) return null;
+
+            int end = ci + len;
+            if (data.Length - end < 64) return null;
+
+            byte[] headBytes = new byte[end];
+            Buffer.BlockCopy(data, 0, headBytes, 0, end);
+            string text = Fb2Sanitizer.BytesToText(headBytes);
+
+            var m = System.Text.RegularExpressions.Regex.Match(
+                text.Length > 4096 ? text.Substring(0, 4096) : text,
+                @"<((?:[A-Za-z0-9_]+:)?)FictionBook\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) return null;
+
+            return text + "\n</" + m.Groups[1].Value + "FictionBook>";
+        }
+
+        // Поиск ASCII-строки без учёта регистра, начинающейся с '<'
+        private static int IndexOfAscii(byte[] d, string s)
+        {
+            int n = s.Length;
+            for (int i = 0; i <= d.Length - n; i++)
+            {
+                if (d[i] != (byte)'<') continue;
+                int j = 1;
+                for (; j < n; j++)
+                {
+                    byte b = d[i + j];
+                    if (b >= (byte)'A' && b <= (byte)'Z') b = (byte)(b + 32);
+                    if (b != (byte)s[j]) break;
+                }
+                if (j == n) return i;
+            }
+            return -1;
+        }
+
+        private static readonly Regex DescriptionOpenTag = new Regex(
+            @"<(?:[A-Za-z0-9_]+:)?description(?=[\s/>])",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         private XElement ReadDescriptionBlock(
             Stream stream,
             string fileName)
@@ -225,22 +283,37 @@ namespace TinyOPDS.Parsers
                     {
                         if (stream.CanSeek) stream.Position = 0;
                         byte[] buffer;
-                        using (var ms = new MemoryStream())
+                        var srcMs = stream as MemoryStream;
+                        ArraySegment<byte> seg;
+                        if (srcMs != null && srcMs.TryGetBuffer(out seg)
+                            && seg.Offset == 0 && seg.Count == seg.Array.Length)
                         {
-                            stream.CopyTo(ms);
-                            buffer = ms.ToArray();
+                            buffer = seg.Array;   // без лишней копии
+                        }
+                        else
+                        {
+                            using (var ms = new MemoryStream())
+                            {
+                                stream.CopyTo(ms);
+                                buffer = ms.ToArray();
+                            }
                         }
 
-                        string raw = Fb2Sanitizer.BytesToText(buffer);
-                        int fixes;
                         // Дальше читается только <description>, поэтому санитайзеру достаточно
-                        // начала файла до </description>, а не всей книги целиком
-                        string clean = Fb2Sanitizer.Sanitize(DescriptionHead(raw), out fixes);
+                        // начала файла до </description>, а не всей книги целиком.
+                        // Сначала ищем конец описания по байтам и декодируем только начало.
+                        string head = DescriptionHeadFromBytes(buffer);
+                        if (head == null)
+                            head = DescriptionHead(Fb2Sanitizer.BytesToText(buffer));
+
+                        int fixes;
+                        string fixDetail;
+                        string clean = Fb2Sanitizer.Sanitize(head, out fixes, out fixDetail);
 
                         if (fixes > 0)
                         {
                             buffer = Encoding.UTF8.GetBytes(clean);
-                            Log.WriteLine(LogLevel.Info, "FB2Parser: auto-sanitized stream for {0} ({1} fixes)", fileName, fixes);
+                            Log.WriteLine(LogLevel.Info, "FB2Parser: auto-sanitized stream for {0} ({1} fixes: {2})", fileName, fixes, fixDetail);
                         }
 
                         stream = new MemoryStream(buffer);
@@ -285,6 +358,7 @@ namespace TinyOPDS.Parsers
                 var charBuffer = new char[charBufferSize];
 
                 bool descriptionFound = false;
+                string carry = string.Empty;   // хвост прошлого блока: тег может попасть на границу блоков
 
                 using (var reader = new StreamReader(
                     stream,
@@ -303,17 +377,21 @@ namespace TinyOPDS.Parsers
 
                         if (!descriptionFound)
                         {
-                            string chunk = new string(charBuffer, 0, charsRead);
-                            int descStartIndex = chunk.IndexOf("description", StringComparison.OrdinalIgnoreCase);
+                            string chunk = carry + new string(charBuffer, 0, charsRead);
 
-                            if (descStartIndex >= 0)
+                            // Ищем именно открывающий тег <description>. Простой поиск слова "description"
+                            // находил объявление пространства имён в корне (например
+                            // xmlns:fb3d="http://www.fictionbook.org/FictionBook3/description")
+                            // и вырезал кусок, начиная с <FictionBook ...
+                            var descTag = DescriptionOpenTag.Match(chunk);
+                            if (descTag.Success)
                             {
-                                int ltIndex = chunk.LastIndexOf('<', descStartIndex);
-                                if (ltIndex >= 0)
-                                {
-                                    descriptionFound = true;
-                                    contentBuilder.Append(charBuffer, ltIndex, charsRead - ltIndex);
-                                }
+                                descriptionFound = true;
+                                contentBuilder.Append(chunk, descTag.Index, chunk.Length - descTag.Index);
+                            }
+                            else
+                            {
+                                carry = chunk.Length > 40 ? chunk.Substring(chunk.Length - 40) : chunk;
                             }
                         }
                         else
