@@ -743,6 +743,8 @@ namespace TinyOPDS
                 _ = Task.Run(async () =>
                 {
                     await FlushRemainingBooksAsync();
+                    Log.WriteLine(ScanProfile.Summary());
+                    Log.WriteLine(ScanProfile.SummaryFb2());
                     BeginInvoke((MethodInvoker)delegate
                     {
                         UpdateInfo(true);
@@ -802,6 +804,7 @@ namespace TinyOPDS
 
             Library.ReleaseKnownFiles();
             Log.WriteLine(ScanProfile.Summary());
+            Log.WriteLine(ScanProfile.SummaryFb2());
 
             UpdateInfo(true);
             Log.WriteLine("Directory scanner completed");
@@ -1389,6 +1392,7 @@ namespace TinyOPDS
         {
             try
             {
+                Log.Flush();
                 string logPath = Log.LogFileName;
 
                 if (File.Exists(logPath))

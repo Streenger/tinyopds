@@ -12,6 +12,8 @@
 using System;
 using System.IO;
 using System.Diagnostics;
+using System.Text;
+using System.Threading;
 
 namespace TinyOPDS
 {
@@ -51,7 +53,9 @@ namespace TinyOPDS
             get { return saveToFile; }
             set
             {
+                bool wasOn = saveToFile;
                 saveToFile = value;
+                if (wasOn && !value) Flush();
 
                 // Ensure directory exists when enabling logging
                 if (saveToFile)
@@ -150,21 +154,78 @@ namespace TinyOPDS
 
                 string message = string.Format(prefix + format, args);
                 Debug.WriteLine(message);
-                if (SaveToFile) WriteToFile(message);
+                if (SaveToFile) WriteToFile(message, level == LogLevel.Error);
             }
         }
 
         private static readonly object fileSyncObject = new object();
 
         /// <summary>
-        /// Writes a line to the current log file.
+        /// Как часто (в секундах) накопленные в памяти строки сбрасываются в файл.
+        /// 0 - писать каждую строку сразу (прежнее поведение).
         /// </summary>
-        /// <param name="message"></param>
-        private static void WriteToFile(string message)
+        public static int FlushIntervalSeconds = 30;
+
+        // Сбрасывать раньше срока, если в памяти накопилось столько строк
+        private const int MaxPendingLines = 5000;
+
+        private static readonly StringBuilder pendingText = new StringBuilder();
+        private static readonly object pendingSync = new object();
+        private static int pendingLines = 0;
+        private static Timer flushTimer;
+        private static bool exitHooked = false;
+
+        /// <summary>
+        /// Ставит строку в очередь на запись. Сообщения уровня Error сбрасываются сразу,
+        /// остальные - по таймеру, при переполнении очереди и при выходе из программы.
+        /// </summary>
+        private static void WriteToFile(string message, bool flushNow)
         {
+            string line = string.Format("{0:MM/dd/yyyy HH:mm:ss.f}\t{1}", DateTime.Now, message);
+            bool needFlush;
+
+            lock (pendingSync)
+            {
+                pendingText.AppendLine(line);
+                pendingLines++;
+
+                if (!exitHooked)
+                {
+                    exitHooked = true;
+                    try
+                    {
+                        AppDomain.CurrentDomain.ProcessExit += (s, e) => Flush();
+                        AppDomain.CurrentDomain.UnhandledException += (s, e) => Flush();
+                    }
+                    catch { }
+                }
+
+                int interval = FlushIntervalSeconds;
+                if (interval > 0 && flushTimer == null)
+                    flushTimer = new Timer(_ => Flush(), null, interval * 1000, interval * 1000);
+
+                needFlush = flushNow || interval <= 0 || pendingLines >= MaxPendingLines;
+            }
+
+            if (needFlush) Flush();
+        }
+
+        /// <summary>
+        /// Немедленно записывает накопленные строки в файл лога.
+        /// </summary>
+        public static void Flush()
+        {
+            string text;
+            lock (pendingSync)
+            {
+                if (pendingText.Length == 0) return;
+                text = pendingText.ToString();
+                pendingText.Clear();
+                pendingLines = 0;
+            }
+
             lock (fileSyncObject)
             {
-                FileStream fileStream = null;
                 try
                 {
                     // Always get fresh path to ensure correct location
@@ -177,20 +238,22 @@ namespace TinyOPDS
                         Directory.CreateDirectory(directory);
                     }
 
-                    fileStream = new FileStream(fullLogPath, (File.Exists(fullLogPath) ? FileMode.Append : FileMode.Create), FileAccess.Write, FileShare.ReadWrite);
+                    using (var fileStream = new FileStream(fullLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
                     using (StreamWriter writer = new StreamWriter(fileStream))
                     {
-                        fileStream = null;
-                        writer.WriteLine(string.Format("{0:MM/dd/yyyy HH:mm:ss.f}\t{1}", DateTime.Now, message));
+                        writer.Write(text);
                     }
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"Failed to write to log file: {ex.Message}");
-                }
-                finally
-                {
-                    fileStream?.Dispose();
+
+                    // Не теряем строки: возвращаем в начало очереди (с ограничением по размеру)
+                    lock (pendingSync)
+                    {
+                        if (pendingText.Length < 4 * 1024 * 1024)
+                            pendingText.Insert(0, text);
+                    }
                 }
             }
         }

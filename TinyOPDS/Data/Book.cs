@@ -468,8 +468,9 @@ namespace TinyOPDS.Data
             // Ensure meaningful content
             if (string.IsNullOrWhiteSpace(result) || result.Length < 3)
             {
+                // Короткие названия ("Ab", "07", "Яд") - обычное дело; запасной вариант штатный,
+                // поэтому в лог это не пишем (раньше засоряло его тысячами предупреждений)
                 result = originalText.ToLowerInvariant().Replace("[", "").Replace("]", "").Replace("(", "").Replace(")", "").Trim();
-                Log.WriteLine(LogLevel.Warning, "NormalizeForDuplicateKey produced short result for '{0}', using fallback", originalText);
             }
 
             return result.Trim();

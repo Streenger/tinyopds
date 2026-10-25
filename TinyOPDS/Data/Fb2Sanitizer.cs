@@ -131,7 +131,13 @@ namespace TinyOPDS.Data
             text = StripControlChars(text, ref count);
             text = FixAmpersands(text, ref count);
             text = StripHtmlJunk(text, ref count);
-            text = EscapeStrayLt(text, ref count);
+
+            // В корректном XML любой "<" - уже настоящая разметка. Экранировать его нельзя:
+            // иначе неизвестный, но корректный тег (например <book-author> в publish-info)
+            // превращается в текст и считается "правкой" при каждом разборе
+            bool wellFormedKnown = IsWellFormed(text);
+            if (!wellFormedKnown)
+                text = EscapeStrayLt(text, ref count);
 
             // Префикс l: используется (обычно l:href), а объявления нет
             if (text.Contains("l:href") && !text.Contains("xmlns:l="))
@@ -142,12 +148,13 @@ namespace TinyOPDS.Data
                     text = text.Insert(root + "<FictionBook".Length,
                         " xmlns:l=\"http://www.w3.org/1999/xlink\"");
                     count++;
+                    wellFormedKnown = false;
                 }
             }
 
             // Структурная починка вложенности - только если файл всё ещё не разбирается.
             // Корректные файлы эта ветка не затрагивает.
-            if (!IsWellFormed(text))
+            if (!(wellFormedKnown || IsWellFormed(text)))
             {
                 int nestFixes;
                 string balanced = BalanceTags(text, out nestFixes);
@@ -637,7 +644,9 @@ namespace TinyOPDS.Data
             // Если в тексте нет знаков вопроса и он уже содержит кириллицу — он в порядке
             if (!text.Contains('?') && CyrillicCheck.IsMatch(text)) return text;
 
-            // Если слишком много знаков вопроса, пробуем восстановить из UTF-8/ANSI сдвигов
+            // Раньше перекодировка всего текста (несколько мегабайт) в трёх кодировках запускалась
+            // почти для любого файла: знак "?" есть уже в <?xml ...?>. Теперь сначала проверяем
+            // начало файла, и только если там видна выгода - перекодируем весь текст.
             Encoding[] encodingsToTry = new Encoding[]
             {
                 Encoding.GetEncoding(1251), // Windows-1251
@@ -645,25 +654,39 @@ namespace TinyOPDS.Data
                 Encoding.GetEncoding(20866) // KOI8-R
             };
 
-            string bestResult = text;
-            int maxCyrillicCount = CountCyrillic(text);
+            string sample = text.Length > SampleLength ? text.Substring(0, SampleLength) : text;
+            byte[] sampleBytes;
+            try
+            {
+                // Переинтерпретируем текущие символы как байты другой кодировки
+                sampleBytes = Encoding.Default.GetBytes(sample);
+            }
+            catch
+            {
+                return text;
+            }
+
+            int sampleQuestions = sample.Count(c => c == '?');
+            int bestSampleCyrillic = CountCyrillic(sample);
+            Encoding bestEncoding = null;
 
             foreach (var enc in encodingsToTry)
             {
                 try
                 {
-                    // Пробуем переинтерпретировать текущие символы как байты другой кодировки
-                    byte[] bytes = Encoding.Default.GetBytes(text);
-                    string decoded = enc.GetString(bytes);
-
+                    string decoded = enc.GetString(sampleBytes);
                     int cyrillicCount = CountCyrillic(decoded);
                     int questionCount = decoded.Count(c => c == '?');
 
-                    // Если стало больше русских букв и меньше/ровно знаков вопроса — это лучший кандидат
-                    if (cyrillicCount > maxCyrillicCount && questionCount <= text.Count(c => c == '?'))
+                    // Кириллицы должно стать больше, и она должна преобладать среди букв:
+                    // иначе обычный английский текст с типографскими тире и кавычками
+                    // "превращался" в кириллические буквы
+                    if (cyrillicCount > bestSampleCyrillic
+                        && questionCount <= sampleQuestions
+                        && cyrillicCount * 2 >= CountLetters(decoded))
                     {
-                        maxCyrillicCount = cyrillicCount;
-                        bestResult = decoded;
+                        bestSampleCyrillic = cyrillicCount;
+                        bestEncoding = enc;
                     }
                 }
                 catch
@@ -672,7 +695,36 @@ namespace TinyOPDS.Data
                 }
             }
 
-            return bestResult;
+            if (bestEncoding == null) return text;
+
+            try
+            {
+                string decodedAll = bestEncoding.GetString(Encoding.Default.GetBytes(text));
+                if (CountCyrillic(decodedAll) > CountCyrillic(text)
+                    && decodedAll.Count(c => c == '?') <= text.Count(c => c == '?'))
+                {
+                    return decodedAll;
+                }
+            }
+            catch
+            {
+                // Игнорируем ошибки кодировок
+            }
+
+            return text;
+        }
+
+        // Сколько символов от начала текста достаточно, чтобы оценить повреждение кодировки
+        private const int SampleLength = 65536;
+
+        private static int CountLetters(string s)
+        {
+            int count = 0;
+            foreach (char c in s)
+            {
+                if (char.IsLetter(c)) count++;
+            }
+            return count;
         }
 
         private static int CountCyrillic(string s)
