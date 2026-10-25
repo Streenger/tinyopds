@@ -53,6 +53,10 @@ namespace TinyOPDS.Parsers
 
             dateString = dateString.Trim();
 
+            // "2001г", "1977 г.", "1999 года": убираем русский суффикс после цифр
+            dateString = Regex.Replace(dateString, @"(?<=\d)\s*(?:гг?\.?|года?)\s*$",
+                string.Empty, RegexOptions.IgnoreCase).Trim();
+
             // Try standard parsing first (for ISO dates, etc.)
             if (TryStandardParse(dateString, out DateTime standardDate))
                 return ValidateDate(standardDate, validFallback);

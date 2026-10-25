@@ -96,6 +96,9 @@ namespace TinyOPDS.Data
             { "performance", "theatre" },
             { "chris_edu", "religion_christianity" },
             { "prose_teen", "teens_literature" },
+            { "beginning_authors", "network_literature" },
+            { "samizdat", "network_literature" },
+            { "sf_realrpg", "sf_litrpg" },
             // общие теги "раздел_all" -> корневой тег раздела
             { "nonf_all", "nonfiction" },
             { "prose_all", "prose" },
