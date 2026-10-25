@@ -30,6 +30,21 @@
 
 ---
 
+### 4. Исправления и ускорение после 3.17.0 (Streenger)
+- **Начало блока `<description>`.** Раньше парсер принимал за начало описания первое вхождение слова `description`, в том числе в объявлении пространства имён (`xmlns:fb3d=".../FictionBook3/description"`), вырезал кусок, начинающийся с `<FictionBook …`, и книга считалась пустой (`title=EMPTY`) и уходила в `libmeta/bad`. Теперь ищется именно открывающий тег `<description>` (с префиксом или без), включая случай, когда тег попадает на границу блоков чтения.
+- **Санитайзер только для начала файла.** Для каталога нужен лишь блок описания, поэтому конец описания ищется по байтам, декодируется и проверяется только начало файла. Чтение описания ускорилось примерно со 75–436 мс до 1 мс на книгу.
+- **Исправлена порча текста.** `FixCorruptedCyrillic` принимала украинские буквы (`і`, `ї`, `є`) и тире в английском тексте за «испорченную кодировку» и превращала названия в мусор (`Ігор` → `╡ЦНП`). Теперь перекодировка применяется только при заметном росте кириллицы, без символов псевдографики.
+- **Корректный XML не переписывается санитайзером.** Неизвестный, но корректный тег (например `<book-author>` в `publish-info`) остаётся тегом.
+- **Исправления в самих книгах** (нормализатор, версия индекса 3): недостающий `document-info/id`, дата документа, дата книги по году издания (или текущая), удаление HTML-мусора (`br`, `b`, `i`, `font`, `div` …) из описания. Повторные сканирования больше не лечат одно и то же.
+- **Безопасная запись архивов.** Временный файл, сброс данных на диск, проверка и атомарная подмена `File.Replace` вместо «удалить и переименовать» (после сбоя питания оставались файлы нужного размера, заполненные нулями).
+- **Копии оригиналов только для содержательных правок.** Правки метаданных не копируют архив в `libmeta/orig`.
+- **Известные файлы и замены.** Имена известных файлов загружаются в память одним запросом; старые версии, заменённые в одной пачке, отправляются в `libmeta/dup` и не разбираются заново.
+- **Жанры.** Поиск тега без учёта регистра с написанием из справочника, очистка невидимых символов, скобок и кириллических двойников, таблица подстановок (около 70 соответствий) и файл `genre-aliases.txt` (`старый_тег=новый_тег`).
+- **Журнал.** Буферизация (сброс раз в 30 секунд, при ошибке и при выходе); ограничение повторяющихся предупреждений `Document ID collision`; убрано предупреждение о коротких названиях; разбивка правок санитайзера по видам в строке `auto-sanitized`; строки `Scan profile` с подробным профилем сканирования.
+- **Результаты.** Повторное сканирование библиотеки из 498 тысяч архивов с 6 047 новыми книгами — около 3,5 минут; тестовый набор из 3 363 проблемных книг после нормализации даёт 0 строк `auto-sanitized`, 0 невалидных книг и 0 нераспознанных жанров.
+
+---
+
 ## English Version
 
 **TinyOPDS v3.17.0 (Streenger Edition)**
@@ -55,3 +70,14 @@ Upstream synchronization (3.16–3.17) with preserved extended FB2 repair toolch
   - FB2 parsing: books without `<author>` get an author from the compiler in the publication title, then from the body title, then `Неизвестный автор`, instead of being moved to `libmeta/bad`; `xmlns:l` and `xmlns:xlink` are checked on the `<description>` tag itself, not anywhere in the block.
   - The first normalization run is slow: the index starts empty, so every archive is checked (hours on very large libraries). Watch the progress in the log; later runs skip processed archives.
   - Real run: 498,331 archives normalized without errors (3,303 repaired, 10,837 fixes); the scan moved 4 bad files and 489 duplicates to `libmeta`.
+
+### Fixes and speed-ups after 3.17.0:
+  - **Description start**: the parser no longer mistakes a namespace declaration containing the word `description` (e.g. `xmlns:fb3d=".../FictionBook3/description"`) for the description tag; such books used to end up in `libmeta/bad` with an empty title.
+  - **Sanitizer on the file head only**: the end of `<description>` is located by bytes and only the head is decoded and checked. Reading a description dropped from about 75-436 ms to about 1 ms per book.
+  - **No more mangled text**: Ukrainian letters and typographic dashes are no longer recoded into garbage; recoding applies only when it clearly increases Cyrillic and yields no box-drawing characters. Well-formed XML with unknown tags is left alone.
+  - **Persistent fixes**: the normalizer (index version 3) writes missing document ids and dates, derives the book date from the publication year (or today), and removes HTML junk from the description.
+  - **Crash-safe rewrite** (temp file, flush, verification, atomic `File.Replace`); originals are backed up to `libmeta/orig` only for content fixes.
+  - **Known-file set and replaced versions**: older versions replaced inside a batch go to `libmeta/dup` and are not parsed again.
+  - **Genres**: case-insensitive lookup, cleanup of hidden characters/brackets/homoglyphs, a built-in alias table (about 70 entries) and `genre-aliases.txt` (`old_tag=new_tag`).
+  - **Log**: buffered (30 s flush, immediate on errors and exit), rate-limited ID collision warnings, per-kind breakdown of sanitizer fixes, detailed `Scan profile`.
+  - **Results**: rescan of a 498k-archive library with 6,047 new books in about 3.5 minutes; a 3,363-book problem set shows 0 `auto-sanitized`, 0 invalid books and 0 unknown genres after normalization.
