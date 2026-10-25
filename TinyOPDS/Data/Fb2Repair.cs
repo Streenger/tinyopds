@@ -76,7 +76,7 @@ namespace TinyOPDS.Data
                 // Текст и структура книги не меняются, резервная копия для них не нужна.
                 int light = EnsureDocumentInfo(desc, idSeed, fileDate);
                 if (idSeed != null || fileDate != null) light += EnsureBookDate(desc);
-                light += RemoveHtmlBreaks(desc);
+                light += RemoveHtmlJunk(desc);
                 fixes += light;
                 fixes += NormalizeGenres(desc);
                 fixes += EnsureGenre(desc);
@@ -97,19 +97,36 @@ namespace TinyOPDS.Data
 
         // --- мусор в описании ----------------------------------------------------
 
-        /// <summary>
-        /// Элементов br в FB2 нет, но в аннотациях они встречаются между абзацами
-        /// (&lt;p&gt;..&lt;/p&gt;&lt;br /&gt;&lt;p&gt;..&lt;/p&gt;). Убираем пустые br из описания:
-        /// на смысл текста это не влияет, зато файл становится корректным по схеме.
-        /// </summary>
-        private static int RemoveHtmlBreaks(XElement desc)
+        // Элементы HTML, которых нет в FB2 (те же, что вычищает Fb2Sanitizer при разборе)
+        private static readonly HashSet<string> HtmlJunkNames =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            var breaks = desc.Descendants()
-                .Where(e => string.Equals(e.Name.LocalName, "br", StringComparison.OrdinalIgnoreCase)
-                            && !e.HasElements && e.Value.Trim().Length == 0)
-                .ToList();
-            foreach (var br in breaks) br.Remove();
-            return breaks.Count;
+            "b", "i", "u", "em", "font", "span", "tt", "small", "big", "s", "strike", "nobr",
+            "br", "center", "div", "ul", "ol", "li", "dl", "dt", "dd", "hr", "img", "pre",
+            "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "meta", "link"
+        };
+
+        /// <summary>
+        /// В аннотациях и истории встречаются HTML-элементы (br между абзацами, b, i, font...).
+        /// Пустые удаляются, остальные заменяются своим содержимым: текст сохраняется,
+        /// а файл становится корректным по схеме FB2 и больше не требует чистки при разборе.
+        /// </summary>
+        private static int RemoveHtmlJunk(XElement desc)
+        {
+            var junk = desc.Descendants().Where(e => HtmlJunkNames.Contains(e.Name.LocalName)).ToList();
+            int count = 0;
+            // с конца документа: вложенные элементы обрабатываются раньше внешних
+            for (int i = junk.Count - 1; i >= 0; i--)
+            {
+                XElement e = junk[i];
+                if (e.Parent == null) continue;
+
+                var kids = e.Nodes().ToList();
+                if (kids.Count == 0) e.Remove();
+                else e.ReplaceWith(kids);
+                count++;
+            }
+            return count;
         }
 
         // --- метаданные документа ----------------------------------------------

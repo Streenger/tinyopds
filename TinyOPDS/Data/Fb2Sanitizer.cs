@@ -102,20 +102,45 @@ namespace TinyOPDS.Data
 
         public static string Sanitize(string text, out int fixes)
         {
+            string detail;
+            return Sanitize(text, out fixes, out detail);
+        }
+
+        /// <summary>
+        /// То же, что Sanitize, но detail содержит разбивку правок по шагам,
+        /// например "amp=2,junk=1" (для журнала и разбора частых случаев).
+        /// </summary>
+        public static string Sanitize(string text, out int fixes, out string detail)
+        {
             int count = 0;
+            var parts = new StringBuilder();
+            int mark = 0;
+            Action<string> note = name =>
+            {
+                if (count > mark)
+                {
+                    if (parts.Length > 0) parts.Append(',');
+                    parts.Append(name).Append('=').Append(count - mark);
+                }
+                mark = count;
+            };
+
             text = StripNameSpaces(text, ref count);
+            note("ns");
 
             if (text.Contains("</FictionBook>") == false && text.Contains("</ns0:FictionBook>"))
             {
                 text = text.Replace("</ns0:FictionBook>", "</FictionBook>");
                 count++;
             }
+            note("ns0close");
             // Если используется префикс xlink, но в корневом теге FictionBook не объявлен namespace xlink — добавляем
             if (text.Contains("xlink:") && !text.Contains("xmlns:xlink"))
             {
                 text = text.Replace("<FictionBook", "<FictionBook xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
                 count++;
             }
+            note("xlink");
             // Автоматическое исправление поврежденной кириллицы на лету
             string fixedText = FixCorruptedCyrillic(text);
             if (fixedText != text)
@@ -123,14 +148,18 @@ namespace TinyOPDS.Data
                 text = fixedText;
                 count++;
             }
+            note("cyr");
             // Удаляем пустые или некорректные теги серий вида <sequence name="" number="" />
             text = Regex.Replace(text, @"<sequence\s+name\s*=\s*""\s*""\s+number\s*=\s*""\s*""\s*/?>", "", RegexOptions.IgnoreCase);
             text = Regex.Replace(text, @"<sequence\s+number\s*=\s*""\s*""\s+name\s*=\s*""\s*""\s*/?>", "", RegexOptions.IgnoreCase);
             // Если заголовок книги состоит только из знаков вопроса или пустой — подстраховываем
             text = Regex.Replace(text, @"<book-title>\?[?,\s]*</book-title>", "<book-title>Неизвестная книга</book-title>", RegexOptions.IgnoreCase);
             text = StripControlChars(text, ref count);
+            note("ctrl");
             text = FixAmpersands(text, ref count);
+            note("amp");
             text = StripHtmlJunk(text, ref count);
+            note("junk");
 
             // В корректном XML любой "<" - уже настоящая разметка. Экранировать его нельзя:
             // иначе неизвестный, но корректный тег (например <book-author> в publish-info)
@@ -138,6 +167,7 @@ namespace TinyOPDS.Data
             bool wellFormedKnown = IsWellFormed(text);
             if (!wellFormedKnown)
                 text = EscapeStrayLt(text, ref count);
+            note("lt");
 
             // Префикс l: используется (обычно l:href), а объявления нет
             if (text.Contains("l:href") && !text.Contains("xmlns:l="))
@@ -151,6 +181,7 @@ namespace TinyOPDS.Data
                     wellFormedKnown = false;
                 }
             }
+            note("lhref");
 
             // Структурная починка вложенности - только если файл всё ещё не разбирается.
             // Корректные файлы эта ветка не затрагивает.
@@ -164,8 +195,10 @@ namespace TinyOPDS.Data
                     count += nestFixes;
                 }
             }
+            note("nest");
 
             fixes = count;
+            detail = parts.ToString();
             return text;
         }
 
@@ -678,12 +711,16 @@ namespace TinyOPDS.Data
                     int cyrillicCount = CountCyrillic(decoded);
                     int questionCount = decoded.Count(c => c == '?');
 
-                    // Кириллицы должно стать больше, и она должна преобладать среди букв:
-                    // иначе обычный английский текст с типографскими тире и кавычками
-                    // "превращался" в кириллические буквы
-                    if (cyrillicCount > bestSampleCyrillic
+                    // Кириллицы должно стать заметно больше (не меньше чем на 20 % и на 8 букв)
+                    // и она должна преобладать среди букв: иначе обычный текст с типографскими
+                    // тире и кавычками "превращался" в кириллические буквы
+                    // Правильно раскодированный русский текст не содержит символов псевдографики
+                    // (такие "буквы" как "╡" - верный признак того, что выбрана не та кодировка,
+                    // например украинские "і", "ї", "є" превращались в мусор)
+                    if (cyrillicCount >= bestSampleCyrillic + bestSampleCyrillic / 5 + 8
                         && questionCount <= sampleQuestions
-                        && cyrillicCount * 2 >= CountLetters(decoded))
+                        && cyrillicCount * 2 >= CountLetters(decoded)
+                        && !HasBoxDrawing(decoded))
                     {
                         bestSampleCyrillic = cyrillicCount;
                         bestEncoding = enc;
@@ -716,6 +753,15 @@ namespace TinyOPDS.Data
 
         // Сколько символов от начала текста достаточно, чтобы оценить повреждение кодировки
         private const int SampleLength = 65536;
+
+        private static bool HasBoxDrawing(string s)
+        {
+            foreach (char c in s)
+            {
+                if (c >= '\u2500' && c <= '\u257F') return true;
+            }
+            return false;
+        }
 
         private static int CountLetters(string s)
         {
