@@ -71,6 +71,42 @@ namespace TinyOPDS.Data
             ContentHash = null;
         }
 
+        // Сколько раз каждый document-id встретился у РАЗНЫХ книг (в рамках запуска).
+        // Нужен, чтобы не засорять журнал, когда один шаблонный id прописан в сотни книг.
+        private static readonly Dictionary<string, int> idCollisionCounts =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object idCollisionSync = new object();
+        private const int IdCollisionLogLimit = 3;
+
+        /// <summary>
+        /// Записывает в журнал коллизию document-id у разных книг. Первые несколько случаев
+        /// для каждого id выводятся предупреждением, дальше - одна информационная строка
+        /// и тишина (поведение при этом не меняется: книга получает собственный id).
+        /// </summary>
+        public static void LogIdCollision(string scope, string id, string existingFile, string newFile)
+        {
+            int count;
+            lock (idCollisionSync)
+            {
+                idCollisionCounts.TryGetValue(id ?? string.Empty, out count);
+                count++;
+                idCollisionCounts[id ?? string.Empty] = count;
+            }
+
+            if (count <= IdCollisionLogLimit)
+            {
+                Log.WriteLine(LogLevel.Warning,
+                    "Document ID collision{0}: id {1}: \"{2}\" and \"{3}\" are different books, assigning a new ID",
+                    scope, id, existingFile, newFile);
+            }
+            else if (count == IdCollisionLogLimit + 1)
+            {
+                Log.WriteLine(LogLevel.Info,
+                    "Document ID {0} is shared by many different books; further collisions for it are not logged",
+                    id);
+            }
+        }
+
         /// <summary>
         /// Один и тот же document-id у двух РАЗНЫХ книг (например, автор скопировал
         /// файл серии и не сменил id). Признаки разных книг: разные ключи дубликатов

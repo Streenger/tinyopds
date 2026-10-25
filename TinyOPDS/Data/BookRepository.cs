@@ -487,9 +487,7 @@ namespace TinyOPDS.Data
                                     && batchByDocumentID.TryGetValue(book.ID, out Book sameIdInBatch)
                                     && Book.IsIdCollision(book, sameIdInBatch))
                                 {
-                                    Log.WriteLine(LogLevel.Warning,
-                                        "Document ID collision in batch: \"{0}\" and \"{1}\" are different books, assigning a new ID",
-                                        sameIdInBatch.FileName, book.FileName);
+                                    Book.LogIdCollision(" in batch", book.ID, sameIdInBatch.FileName, book.FileName);
                                     book.ResetDocumentId();
                                 }
                                 ResolveIdCollisionWithDb(book);
@@ -516,6 +514,12 @@ namespace TinyOPDS.Data
                                             // Track the replacement
                                             inBatchReplacements[existingInBatch.ID] = book.ID;
                                             replacedBook = existingInBatch;
+
+                                            // Старая версия в БД не попадает. Без пометки она останется в
+                                            // библиотеке "неизвестным" файлом, и при каждом сканировании
+                                            // будет разбираться и заменяться заново: отправляем её в dup
+                                            if (!string.IsNullOrEmpty(existingInBatch.FileName))
+                                                result.DuplicateFiles.Add(existingInBatch.FileName);
                                             foundInBatch = false; // Allow this book to be added
                                             result.Replaced++;
                                         }
@@ -571,6 +575,8 @@ namespace TinyOPDS.Data
                                                     booksToAdd.Remove(existingInBatch);
 
                                                     replacedBook = existingInBatch;
+                                                    if (!string.IsNullOrEmpty(existingInBatch.FileName))
+                                                        result.DuplicateFiles.Add(existingInBatch.FileName);
                                                     result.Replaced++;
                                                 }
                                                 else
@@ -2321,9 +2327,7 @@ namespace TinyOPDS.Data
 
                     if (Book.IsIdCollision(book, existing))
                     {
-                        Log.WriteLine(LogLevel.Warning,
-                            "Document ID collision: \"{0}\" and \"{1}\" are different books, assigning a new ID",
-                            existing.FileName, book.FileName);
+                        Book.LogIdCollision(string.Empty, book.ID, existing.FileName, book.FileName);
                         book.ResetDocumentId();
                         return;
                     }

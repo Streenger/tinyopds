@@ -96,6 +96,23 @@ namespace TinyOPDS.Data
             { "performance", "theatre" },
             { "chris_edu", "religion_christianity" },
             { "prose_teen", "teens_literature" },
+            // общие теги "раздел_all" -> корневой тег раздела
+            { "nonf_all", "nonfiction" },
+            { "prose_all", "prose" },
+            { "humor_all", "humor" },
+            { "sf_all", "sf" },
+            { "det_all", "detective" },
+            { "love_all", "love" },
+            { "adv_all", "adventure" },
+            { "child_all", "children" },
+            { "sci_all", "science" },
+            { "ref_all", "reference" },
+            { "religion_all", "religion" },
+            { "home_all", "home" },
+            { "poetry_all", "poetry" },
+            { "antique_all", "antique" },
+            { "thriller_all", "thriller" },
+            { "drama_all", "drama" },
         };
 
         private static Dictionary<string, string> Load()
