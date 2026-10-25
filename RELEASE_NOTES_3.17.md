@@ -41,6 +41,7 @@
 - **Известные файлы и замены.** Имена известных файлов загружаются в память одним запросом; старые версии, заменённые в одной пачке, отправляются в `libmeta/dup` и не разбираются заново.
 - **Жанры.** Поиск тега без учёта регистра с написанием из справочника, очистка невидимых символов, скобок и кириллических двойников, таблица подстановок (около 70 соответствий) и файл `genre-aliases.txt` (`старый_тег=новый_тег`).
 - **Журнал.** Буферизация (сброс раз в 30 секунд, при ошибке и при выходе); ограничение повторяющихся предупреждений `Document ID collision`; убрано предупреждение о коротких названиях; разбивка правок санитайзера по видам в строке `auto-sanitized`; строки `Scan profile` с подробным профилем сканирования.
+- **Даты и жанры по журналу сервера.** Даты вида `2001г`, `1977 г.`, `1999 года` читаются как год; добавлены соответствия `samizdat` / `beginning_authors` → `network_literature` и `sf_realrpg` → `sf_litrpg`.
 - **Результаты.** Повторное сканирование библиотеки из 498 тысяч архивов с 6 047 новыми книгами — около 3,5 минут; тестовый набор из 3 363 проблемных книг после нормализации даёт 0 строк `auto-sanitized`, 0 невалидных книг и 0 нераспознанных жанров.
 
 ---
@@ -80,4 +81,5 @@ Upstream synchronization (3.16–3.17) with preserved extended FB2 repair toolch
   - **Known-file set and replaced versions**: older versions replaced inside a batch go to `libmeta/dup` and are not parsed again.
   - **Genres**: case-insensitive lookup, cleanup of hidden characters/brackets/homoglyphs, a built-in alias table (about 70 entries) and `genre-aliases.txt` (`old_tag=new_tag`).
   - **Log**: buffered (30 s flush, immediate on errors and exit), rate-limited ID collision warnings, per-kind breakdown of sanitizer fixes, detailed `Scan profile`.
+  - **Dates and genres from the server log**: dates like `2001г` / `1977 г.` are read as a year; `samizdat` and `beginning_authors` map to `network_literature`, `sf_realrpg` to `sf_litrpg`.
   - **Results**: rescan of a 498k-archive library with 6,047 new books in about 3.5 minutes; a 3,363-book problem set shows 0 `auto-sanitized`, 0 invalid books and 0 unknown genres after normalization.
