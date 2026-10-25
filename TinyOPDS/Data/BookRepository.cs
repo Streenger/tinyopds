@@ -30,7 +30,7 @@ namespace TinyOPDS.Data
         public BookRepository(DatabaseManager database)
         {
             db = database;
-            validGenreTags = new HashSet<string>();
+            validGenreTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             LoadValidGenreTags();
 
             // Initialize duplicate detector (normal mode by default)
@@ -155,13 +155,18 @@ namespace TinyOPDS.Data
             // Если кэш пуст - попытаться перезагрузить
             if (validGenreTags.Count == 0) LoadValidGenreTags();
 
-            // 1. Как есть
-            if (validGenreTags.Contains(tag)) { resolved = tag; return true; }
+            // Набор тегов сравнивается без учёта регистра; resolved - всегда написание из справочника
+            // (например "AU", а не "au")
+            string actual;
 
-            // 2. Регистр и пробелы
-            string candidate = tag.Trim().ToLowerInvariant();
-            if (candidate.Length == 0) return false;
-            if (validGenreTags.Contains(candidate)) { resolved = candidate; return true; }
+            // 1. Как есть
+            if (validGenreTags.TryGetValue(tag, out actual)) { resolved = actual; return true; }
+
+            // 2. Регистр, пробелы, невидимые символы, скобки, кириллические двойники
+            string cleaned = GenreAliases.Clean(tag);
+            if (cleaned.Length == 0) return false;
+            if (validGenreTags.TryGetValue(cleaned, out actual)) { resolved = actual; return true; }
+            string candidate = cleaned.ToLowerInvariant();
 
             // 3. Дефис -> подчёркивание, схлопывание дублей
             if (candidate.IndexOf('-') >= 0)
@@ -170,11 +175,20 @@ namespace TinyOPDS.Data
                 while (dashed.Contains("__")) dashed = dashed.Replace("__", "_");
                 dashed = dashed.Trim('_');
 
-                if (dashed.Length > 0 && validGenreTags.Contains(dashed))
+                if (dashed.Length > 0 && validGenreTags.TryGetValue(dashed, out actual))
                 {
-                    resolved = dashed;
+                    resolved = actual;
                     return true;
                 }
+            }
+
+            // 4. Известные нестандартные теги (genre-aliases.txt и встроенная таблица)
+            string aliasTarget;
+            if ((GenreAliases.TryGet(candidate, out aliasTarget) || GenreAliases.TryGet(tag, out aliasTarget))
+                && validGenreTags.TryGetValue(aliasTarget, out actual))
+            {
+                resolved = actual;
+                return true;
             }
 
             return false;
