@@ -1,0 +1,54 @@
+name: Upstream safe checks
+
+on:
+  push:
+    branches: [master, 'chore/upstream-safe-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build GUI and CLI
+        shell: pwsh
+        run: |
+          msbuild TinyOPDS.sln /p:Configuration=Release '/p:Platform=Any CPU' /p:LangVersion=latest /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile and run assembly regression checks
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $compiler /nologo /out:tests\UpstreamSafeChecks.exe /r:System.Drawing.dll /r:System.Xml.Linq.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll tests\UpstreamSafeChecks.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & tests\UpstreamSafeChecks.exe TinyOPDS\bin\Release\TinyOpds3.15.5\TinyOPDS.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & tests\UpstreamSafeChecks.exe TinyOPDSCLI\bin\Release\TinyOPDSCLI.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check actual SQL and reader translation
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tests/reader_translation_check.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Attach test builds without creating a release
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinyopds-upstream-safe-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            TinyOPDS/bin/Release/TinyOpds3.15.5/
+            TinyOPDSCLI/bin/Release/
