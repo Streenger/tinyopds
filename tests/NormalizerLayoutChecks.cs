@@ -53,6 +53,17 @@ internal static class NormalizerLayoutChecks
         return (int)result.GetType().GetField(field).GetValue(result);
     }
 
+    private static string EnableFileLog(string library)
+    {
+        string folder = Path.Combine(Directory.GetParent(library).FullName, "logs");
+        app.GetType("TinyOPDS.Utils", true)
+            .GetField("serviceFilesLocation", BindingFlags.Static | BindingFlags.NonPublic).SetValue(null, folder);
+        var log = app.GetType("TinyOPDS.Log");
+        log.GetField("FlushIntervalSeconds").SetValue(null, 3600);
+        log.GetProperty("SaveToFile").SetValue(null, true, null);
+        return (string)log.GetProperty("LogFileName").GetValue(null, null);
+    }
+
     private static void Check(string name, Action<string> test)
     {
         string scenario = Path.Combine(root, (++checks).ToString("00"));
@@ -63,7 +74,11 @@ internal static class NormalizerLayoutChecks
         settingsType.GetProperty("MetaPath").SetValue(settings, Path.Combine(scenario, "libmeta"), null);
         try { test(library); Console.WriteLine("PASS " + name); }
         catch (Exception ex) { failures++; Console.WriteLine("FAIL " + name + ": " + ex.GetBaseException().Message); }
-        finally { app.GetType("TinyOPDS.LibraryNormalizer").GetField("IsRunning").SetValue(null, false); }
+        finally
+        {
+            app.GetType("TinyOPDS.Log").GetProperty("SaveToFile").SetValue(null, false, null);
+            app.GetType("TinyOPDS.LibraryNormalizer").GetField("IsRunning").SetValue(null, false);
+        }
     }
 
     private static int Main(string[] args)
@@ -161,15 +176,16 @@ internal static class NormalizerLayoutChecks
             Equal(0, Directory.GetDirectories(library).Length);
         });
 
-        Check("KeepOriginals preserves the entire source ZIP byte-for-byte", library => {
+        Check("multi-book source is deleted even with KeepOriginals enabled", library => {
             string source = Path.Combine(library, "keep.zip");
             Archive(source, "a.fb2", "b.fb2", "cover.jpg");
-            string before = Convert.ToBase64String(File.ReadAllBytes(source));
             Equal(0, Count(Normalize(library, true), "Errors"));
-            string backup = Path.Combine(Directory.GetParent(library).FullName, "libmeta", "orig", "keep.zip");
-            Equal(before, Convert.ToBase64String(File.ReadAllBytes(backup)));
             Equal(false, File.Exists(source));
+            string meta = Path.Combine(Directory.GetParent(library).FullName, "libmeta");
+            Equal(false, Directory.Exists(meta));
             Equal(2, Directory.GetFiles(Path.Combine(library, "keep")).Length);
+            Book(Path.Combine(library, "keep", "a.zip"), "a.fb2", "a.fb2");
+            Book(Path.Combine(library, "keep", "b.zip"), "b.fb2", "b.fb2");
         });
 
         Check("destination blocked by a file leaves the original intact", library => {
@@ -182,6 +198,81 @@ internal static class NormalizerLayoutChecks
             Equal(0, Count(result, "BooksExtracted"));
             Equal(before, Convert.ToBase64String(File.ReadAllBytes(source)));
             Equal("do not overwrite", File.ReadAllText(Path.Combine(library, "blocked")));
+        });
+
+        Check("failure after one output ZIP preserves the complete source", library => {
+            string source = Path.Combine(library, "partial.zip");
+            Archive(source, "a.fb2", "b.fb2");
+            string before = Convert.ToBase64String(File.ReadAllBytes(source));
+            Directory.CreateDirectory(Path.Combine(library, "partial", "b.zip"));
+            string log = EnableFileLog(library);
+            object result = Normalize(library, true);
+            Equal(1, Count(result, "Errors"));
+            Equal(0, Count(result, "ArchivesSplit"));
+            Equal(1, Count(result, "BooksExtracted"));
+            Equal(before, Convert.ToBase64String(File.ReadAllBytes(source)));
+            Book(Path.Combine(library, "partial", "a.zip"), "a.fb2", "a.fb2");
+            string text = File.ReadAllText(log);
+            Equal(true, text.Contains("LibraryNormalizer: failed on"));
+            Equal(false, text.Contains("source archive deleted"));
+        });
+
+        Check("source is already deleted when single-archive worker returns", library => {
+            string first = Path.Combine(library, "first.zip");
+            string second = Path.Combine(library, "second.zip");
+            Archive(first, "a.fb2", "b.fb2");
+            Archive(second, "c.fb2", "d.fb2");
+            string secondBefore = Convert.ToBase64String(File.ReadAllBytes(second));
+            var type = app.GetType("TinyOPDS.LibraryNormalizer");
+            var worker = type.GetMethod("NormalizeSingleArchive", BindingFlags.Static | BindingFlags.NonPublic);
+            object result = Activator.CreateInstance(type.GetNestedType("NormalizeResult"));
+            string log = EnableFileLog(library);
+            worker.Invoke(null, new object[] { first, result });
+            Equal(false, File.Exists(first));
+            Equal(secondBefore, Convert.ToBase64String(File.ReadAllBytes(second)));
+            Equal(false, Directory.Exists(Path.Combine(library, "second")));
+            Book(Path.Combine(library, "first", "a.zip"), "a.fb2", "a.fb2");
+            Book(Path.Combine(library, "first", "b.zip"), "b.fb2", "b.fb2");
+            string firstLog = File.ReadAllText(log);
+            Equal(true, firstLog.Contains("source archive deleted \"" + first + "\""));
+            Equal(false, firstLog.Contains("source archive deleted \"" + second + "\""));
+            worker.Invoke(null, new object[] { second, result });
+            Equal(false, File.Exists(second));
+            Book(Path.Combine(library, "second", "c.zip"), "c.fb2", "c.fb2");
+            Book(Path.Combine(library, "second", "d.zip"), "d.fb2", "d.fb2");
+            Equal(2, Count(result, "ArchivesSplit"));
+            Equal(0, Count(result, "Errors"));
+            string bothLogs = File.ReadAllText(log);
+            Equal(true, bothLogs.IndexOf(first, StringComparison.Ordinal) <
+                bothLogs.IndexOf(second, StringComparison.Ordinal));
+        });
+
+        Check("completion log is flushed without waiting for the timer", library => {
+            string source = Path.Combine(library, "logged.zip");
+            Archive(source, "a.fb2", "b.fb2");
+            string log = EnableFileLog(library);
+            Equal(0, Count(Normalize(library, false), "Errors"));
+            Equal(false, File.Exists(source));
+            string text = File.ReadAllText(log);
+            Equal(true, text.Contains("source archive deleted \"" + source + "\""));
+            Equal(true, text.Contains("output=\"" + Path.Combine(library, "logged") + "\""));
+            Equal(true, text.Contains("books=2"));
+        });
+
+        Check("source deletion failure is logged without a success event", library => {
+            string source = Path.Combine(library, "locked.zip");
+            Archive(source, "a.fb2", "b.fb2");
+            string before = Convert.ToBase64String(File.ReadAllBytes(source));
+            string log = EnableFileLog(library);
+            using (var handle = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                object result = Normalize(library, false);
+                Equal(1, Count(result, "Errors"));
+                Equal(before, Convert.ToBase64String(File.ReadAllBytes(source)));
+                string text = File.ReadAllText(log);
+                Equal(true, text.Contains("delete original failed"));
+                Equal(false, text.Contains("source archive deleted"));
+            }
         });
 
         Check("empty ZIP creates no destination directory", library => {

@@ -16,7 +16,8 @@ namespace TinyOPDS
     /// Приводит библиотеку к инварианту "1 zip = 1 книга".
     /// Архивы с несколькими книгами (.fb2/.epub) раскладываются на отдельные zip
     /// в подпапке с именем исходного архива без расширения.
-    /// Оригинал мультикниги при KeepOriginals=true уходит в libmeta/orig, иначе удаляется.
+    /// Исходный мультиархив удаляется после записи всех книг; результат пишется в лог
+    /// до перехода к следующему архиву.
     /// </summary>
     public static class LibraryNormalizer
     {
@@ -127,7 +128,7 @@ namespace TinyOPDS
 
         /// <summary>
         /// Основной проход. libraryPath — корень библиотеки.
-        /// keepOriginals — сохранять исходные мультиархивы в libmeta/orig.
+        /// keepOriginals — сохранять резервные копии при содержательной починке FB2.
         /// </summary>
         public static NormalizeResult Normalize(string libraryPath, bool keepOriginals,
     bool repairFb2 = true)
@@ -161,7 +162,7 @@ namespace TinyOPDS
                 result.ArchivesScanned++;
                 try
                 {
-                    NormalizeSingleArchive(zipPath, libraryPath, keepOriginals, result);
+                    NormalizeSingleArchive(zipPath, result);
                 }
                 catch (Exception e)
                 {
@@ -248,8 +249,7 @@ namespace TinyOPDS
             return result;
         }
 
-        private static void NormalizeSingleArchive(string zipPath, string libraryPath,
-           bool keepOriginals, NormalizeResult result)
+        private static void NormalizeSingleArchive(string zipPath, NormalizeResult result)
         {
             List<string> bookEntries;
 
@@ -292,42 +292,43 @@ namespace TinyOPDS
                     string newZipPath = LibraryMeta.GetUniquePath(targetDir, baseName);
 
                     using (var outStream = new FileStream(newZipPath, FileMode.CreateNew, FileAccess.Write))
-                    using (var newArchive = new ZipArchive(outStream, ZipArchiveMode.Create))
                     {
-                        var newEntry = newArchive.CreateEntry(safeName, CompressionLevel.Optimal);
-                        using (var src = entry.Open())
-                        using (var dst = newEntry.Open())
+                        using (var newArchive = new ZipArchive(outStream, ZipArchiveMode.Create, true))
                         {
-                            src.CopyTo(dst);
+                            var newEntry = newArchive.CreateEntry(safeName, CompressionLevel.Optimal);
+                            using (var src = entry.Open())
+                            using (var dst = newEntry.Open())
+                            {
+                                src.CopyTo(dst);
+                            }
                         }
+                        // Данные и каталог ZIP должны попасть на диск до удаления сборника.
+                        outStream.Flush(true);
                     }
 
                     extractedHere++;
                     result.BooksExtracted++;
                 }
-            }   // <-- архив закрыт, только теперь можно двигать/удалять файл
+            }   // Исходный архив и все выходные ZIP закрыты.
 
-            // Разложили — теперь убираем исходный мультиархив
-            if (extractedHere > 0)
+            if (extractedHere != bookEntries.Count)
+                throw new InvalidDataException("Not all books were written; source archive retained.");
+
+            result.ArchivesSplit++;
+            // Удаляем здесь, до возврата в цикл; KeepOriginals относится только к починке FB2.
+            try { File.Delete(zipPath); }
+            catch (Exception e)
             {
-                result.ArchivesSplit++;
-
-                if (keepOriginals)
-                {
-                    string origDir = LibraryMeta.GetOrigDir(libraryPath);
-                    LibraryMeta.MoveFileSafely(zipPath, origDir, copyInsteadOfMove: false);
-                }
-                else
-                {
-                    try { File.Delete(zipPath); }
-                    catch (Exception e)
-                    {
-                        result.Errors++;
-                        Log.WriteLine(LogLevel.Error, "LibraryNormalizer: delete original failed \"{0}\": {1}",
-                            zipPath, e.Message);
-                    }
-                }
+                result.Errors++;
+                Log.WriteLine(LogLevel.Error, "LibraryNormalizer: delete original failed \"{0}\": {1}",
+                    zipPath, e.Message);
+                return;
             }
+
+            Log.WriteLine(LogLevel.Info,
+                "LibraryNormalizer: source archive deleted \"{0}\"; output=\"{1}\"; books={2}",
+                zipPath, targetDir, extractedHere);
+            Log.Flush(); // Завершение текущего сборника видно в файле до обработки следующего.
         }
 
         /// <summary>
