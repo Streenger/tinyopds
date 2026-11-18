@@ -14,7 +14,8 @@ namespace TinyOPDS
 {
     /// <summary>
     /// Приводит библиотеку к инварианту "1 zip = 1 книга".
-    /// Архивы с несколькими книгами (.fb2/.epub) раскладываются на отдельные zip.
+    /// Архивы с несколькими книгами (.fb2/.epub) раскладываются на отдельные zip
+    /// в подпапке с именем исходного архива без расширения.
     /// Оригинал мультикниги при KeepOriginals=true уходит в libmeta/orig, иначе удаляется.
     /// </summary>
     public static class LibraryNormalizer
@@ -267,7 +268,10 @@ namespace TinyOPDS
             Log.WriteLine(LogLevel.Info, "LibraryNormalizer: splitting \"{0}\" ({1} books)",
                 zipPath, bookEntries.Count);
 
-            string targetDir = Path.GetDirectoryName(zipPath);
+            // Не собираем книги всех мультиархивов в одном огромном каталоге.
+            string targetDir = Path.Combine(Path.GetDirectoryName(zipPath),
+                Path.GetFileNameWithoutExtension(zipPath));
+            Directory.CreateDirectory(targetDir);
             int extractedHere = 0;
 
             using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
