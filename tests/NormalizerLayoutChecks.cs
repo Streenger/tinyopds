@@ -161,6 +161,70 @@ internal static class NormalizerLayoutChecks
             Book(Path.Combine(folder, "b.zip"), "b.fb2", "b.fb2");
         });
 
+        Check("resume skips an already written identical book without (2)", library => {
+            string source = Path.Combine(library, "resume.zip");
+            string folder = Path.Combine(library, "resume");
+            string written = Path.Combine(folder, "a.zip");
+            Archive(written, "a.fb2");
+            string before = Convert.ToBase64String(File.ReadAllBytes(written));
+            Archive(source, "a.fb2", "b.fb2");
+            string log = EnableFileLog(library);
+            object result = Normalize(library, false);
+            Equal(0, Count(result, "Errors"));
+            Equal(1, Count(result, "BooksExtracted"));
+            Equal(1, Count(result, "BooksSkippedExisting"));
+            Equal(before, Convert.ToBase64String(File.ReadAllBytes(written)));
+            Book(Path.Combine(folder, "b.zip"), "b.fb2", "b.fb2");
+            Equal(2, Directory.GetFiles(folder).Length);
+            Equal(false, File.Exists(source));
+            Equal(true, File.ReadAllText(log).Contains("skippedExisting=1"));
+        });
+
+        Check("same name and size but different CRC gets (2)", library => {
+            string folder = Path.Combine(library, "crc");
+            string other = Path.Combine(folder, "a.zip");
+            Directory.CreateDirectory(folder);
+            using (var zip = ZipFile.Open(other, ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(zip.CreateEntry("a.fb2").Open(), new UTF8Encoding(false)))
+                writer.Write(Payload("z.fb2")); // та же длина, другое содержимое
+            string before = Convert.ToBase64String(File.ReadAllBytes(other));
+            Archive(Path.Combine(library, "crc.zip"), "a.fb2", "b.fb2");
+            object result = Normalize(library, false);
+            Equal(0, Count(result, "Errors"));
+            Equal(0, Count(result, "BooksSkippedExisting"));
+            Equal(before, Convert.ToBase64String(File.ReadAllBytes(other)));
+            Book(Path.Combine(folder, "a (2).zip"), "a.fb2", "a.fb2");
+        });
+
+        Check("truncated partial ZIP is rewritten in place", library => {
+            string folder = Path.Combine(library, "partial");
+            string partial = Path.Combine(folder, "a.zip");
+            Archive(partial, "a.fb2");
+            byte[] bytes = File.ReadAllBytes(partial);
+            Array.Resize(ref bytes, bytes.Length / 2);
+            File.WriteAllBytes(partial, bytes);
+            Archive(Path.Combine(library, "partial.zip"), "a.fb2", "b.fb2");
+            object result = Normalize(library, false);
+            Equal(0, Count(result, "Errors"));
+            Equal(2, Count(result, "BooksExtracted"));
+            Book(partial, "a.fb2", "a.fb2");
+            Equal(2, Directory.GetFiles(folder).Length);
+        });
+
+        Check("interrupted duplicate basenames resume without (3)", library => {
+            string source = Path.Combine(library, "duplicates.zip");
+            Archive(source, "one/a.fb2", "two/a.fb2");
+            Equal(0, Count(Normalize(library, false), "Errors"));
+            Archive(source, "one/a.fb2", "two/a.fb2"); // как будто удаление не успело
+            object result = Normalize(library, false);
+            Equal(0, Count(result, "Errors"));
+            Equal(2, Count(result, "BooksSkippedExisting"));
+            string folder = Path.Combine(library, "duplicates");
+            Equal(2, Directory.GetFiles(folder).Length);
+            Book(Path.Combine(folder, "a (2).zip"), "a.fb2", "two/a.fb2");
+            Equal(false, File.Exists(source));
+        });
+
         Check("single-book ZIP and loose-book packing retain their layout", library => {
             string single = Path.Combine(library, "single.zip");
             Archive(single, "inside/single.fb2");

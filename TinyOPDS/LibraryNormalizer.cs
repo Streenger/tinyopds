@@ -35,6 +35,7 @@ namespace TinyOPDS
             public int BooksRepaired;      // ← ДОБАВИТЬ
             public int RepairFixes;        // ← ДОБАВИТЬ
             public int ArchivesSkippedIndexed; // пропущено по индексу уже нормализованных
+            public int BooksSkippedExisting;   // уже записаны прерванным запуском, копия не создана
             public List<string> Messages = new List<string>();
         }
 
@@ -273,6 +274,7 @@ namespace TinyOPDS
                 Path.GetFileNameWithoutExtension(zipPath));
             Directory.CreateDirectory(targetDir);
             int extractedHere = 0;
+            int skippedHere = 0;
 
             using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
             {
@@ -289,9 +291,37 @@ namespace TinyOPDS
                             entry.Name, safeName);
 
                     string baseName = Path.GetFileNameWithoutExtension(safeName) + ".zip";
-                    string newZipPath = LibraryMeta.GetUniquePath(targetDir, baseName);
+                    string nameOnly = Path.GetFileNameWithoutExtension(baseName);
+                    string newZipPath = null;
 
-                    using (var outStream = new FileStream(newZipPath, FileMode.CreateNew, FileAccess.Write))
+                    // После прерванного запуска книга может уже лежать в папке: такую не пишем
+                    // повторно и не создаём " (2)". Другая книга с тем же именем получает суффикс,
+                    // недописанный (нечитаемый) ZIP перезаписывается.
+                    for (int n = 1; newZipPath == null; n++)
+                    {
+                        string candidate = Path.Combine(targetDir, n == 1 ? baseName
+                            : string.Format("{0} ({1}).zip", nameOnly, n));
+                        if (!File.Exists(candidate)) { newZipPath = candidate; break; }
+
+                        bool? same = SameBookZip(candidate, safeName, entry);
+                        if (same == true) break;
+                        if (same == null)
+                        {
+                            Log.WriteLine(LogLevel.Warning,
+                                "LibraryNormalizer: replacing unreadable partial ZIP \"{0}\"", candidate);
+                            newZipPath = candidate;
+                        }
+                    }
+
+                    if (newZipPath == null)
+                    {
+                        extractedHere++;
+                        skippedHere++;
+                        result.BooksSkippedExisting++;
+                        continue;
+                    }
+
+                    using (var outStream = new FileStream(newZipPath, FileMode.Create, FileAccess.Write))
                     {
                         using (var newArchive = new ZipArchive(outStream, ZipArchiveMode.Create, true))
                         {
@@ -326,9 +356,43 @@ namespace TinyOPDS
             }
 
             Log.WriteLine(LogLevel.Info,
-                "LibraryNormalizer: source archive deleted \"{0}\"; output=\"{1}\"; books={2}",
-                zipPath, targetDir, extractedHere);
+                "LibraryNormalizer: source archive deleted \"{0}\"; output=\"{1}\"; books={2}; skippedExisting={3}",
+                zipPath, targetDir, extractedHere, skippedHere);
             Log.Flush(); // Завершение текущего сборника видно в файле до обработки следующего.
+        }
+
+        // В .NET Framework 4.8 у ZipArchiveEntry нет публичного Crc32; поле заполняется
+        // из центрального каталога при открытии архива, распаковка не нужна.
+        private static readonly System.Reflection.FieldInfo Crc32Field = typeof(ZipArchiveEntry)
+            .GetField("_crc32", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        private static uint Crc32(ZipArchiveEntry entry)
+        {
+            if (Crc32Field == null)
+                throw new NotSupportedException("ZipArchiveEntry CRC32 is unavailable in this .NET runtime");
+            return (uint)Crc32Field.GetValue(entry);
+        }
+
+        /// <summary>
+        /// true — в ZIP ровно эта книга (имя, размер и CRC32 совпадают); false — другой файл;
+        /// null — ZIP не читается, то есть недописан при прерывании.
+        /// Содержимое не распаковывается.
+        /// </summary>
+        private static bool? SameBookZip(string zipPath, string entryName, ZipArchiveEntry source)
+        {
+            try
+            {
+                using (var zip = ZipFile.OpenRead(zipPath))
+                {
+                    if (zip.Entries.Count != 1) return false;
+                    var e = zip.Entries[0];
+                    if (!string.Equals(e.FullName, entryName, StringComparison.Ordinal)
+                        || e.Length != source.Length)
+                        return false;
+                    return Crc32(e) == Crc32(source);
+                }
+            }
+            catch (InvalidDataException) { return null; }
         }
 
         /// <summary>
