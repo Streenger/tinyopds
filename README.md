@@ -1,4 +1,4 @@
-# TinyOPDS v3.22.5 (Streenger Edition)
+# TinyOPDS v3.22.6 (Streenger Edition)
 
 Лёгкий OPDS-сервер для домашних и сетевых библиотек электронных книг.
 
