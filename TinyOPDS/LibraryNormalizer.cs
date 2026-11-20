@@ -275,6 +275,7 @@ namespace TinyOPDS
             Directory.CreateDirectory(targetDir);
             int extractedHere = 0;
             int skippedHere = 0;
+            var outputs = new List<string>(bookEntries.Count);
 
             using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
             {
@@ -304,7 +305,7 @@ namespace TinyOPDS
                         if (!File.Exists(candidate)) { newZipPath = candidate; break; }
 
                         bool? same = SameBookZip(candidate, safeName, entry);
-                        if (same == true) break;
+                        if (same == true) { outputs.Add(candidate); break; }
                         if (same == null)
                         {
                             Log.WriteLine(LogLevel.Warning,
@@ -332,10 +333,9 @@ namespace TinyOPDS
                                 src.CopyTo(dst);
                             }
                         }
-                        // Данные и каталог ZIP должны попасть на диск до удаления сборника.
-                        outStream.Flush(true);
                     }
 
+                    outputs.Add(newZipPath);
                     extractedHere++;
                     result.BooksExtracted++;
                 }
@@ -343,6 +343,12 @@ namespace TinyOPDS
 
             if (extractedHere != bookEntries.Count)
                 throw new InvalidDataException("Not all books were written; source archive retained.");
+
+            // Один проход сброса на диск вместо Flush(true) после каждой книги: до удаления
+            // сборника все его ZIP (и записанные сейчас, и пропущенные) должны быть на диске.
+            foreach (string output in outputs)
+                using (var fs = new FileStream(output, FileMode.Open, FileAccess.Write, FileShare.Read))
+                    fs.Flush(true);
 
             result.ArchivesSplit++;
             // Удаляем здесь, до возврата в цикл; KeepOriginals относится только к починке FB2.

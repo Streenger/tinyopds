@@ -225,6 +225,21 @@ internal static class NormalizerLayoutChecks
             Equal(false, File.Exists(source));
         });
 
+        Check("source is kept when an output ZIP cannot be flushed", library => {
+            string source = Path.Combine(library, "noflush.zip");
+            string written = Path.Combine(library, "noflush", "a.zip");
+            Archive(written, "a.fb2");
+            Archive(source, "a.fb2", "b.fb2");
+            string before = Convert.ToBase64String(File.ReadAllBytes(source));
+            using (new FileStream(written, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                object result = Normalize(library, false);
+                Equal(1, Count(result, "Errors"));
+                Equal(0, Count(result, "ArchivesSplit"));
+            }
+            Equal(before, Convert.ToBase64String(File.ReadAllBytes(source)));
+        });
+
         Check("single-book ZIP and loose-book packing retain their layout", library => {
             string single = Path.Combine(library, "single.zip");
             Archive(single, "inside/single.fb2");
