@@ -5,7 +5,7 @@
  * Copyright (c) 2013-2025 SeNSSoFT
  * SPDX-License-Identifier: MIT
  *
- * Checks for new releases on GitHub
+ * Checks for new releases of the Streenger Edition fork on GitHub
  *
  */
 
@@ -31,9 +31,9 @@ namespace TinyOPDS
 
         #region Private fields
 
-        private readonly string githubReleasesApi = "https://api.github.com/repos/sensboston/tinyopds/releases/latest";
-        private readonly string githubTagsApi = "https://api.github.com/repos/sensboston/tinyopds/tags";
-        private readonly string githubReleasesPage = "https://github.com/sensboston/tinyopds/releases";
+        private readonly string githubReleasesApi = "https://api.github.com/repos/Streenger/tinyopds/releases/latest";
+        private readonly string githubTagsApi = "https://api.github.com/repos/Streenger/tinyopds/tags";
+        private readonly string githubReleasesPage = "https://github.com/Streenger/tinyopds/releases";
 
         private bool isChecking = false;
         private WebClient webClient;
@@ -212,7 +212,7 @@ namespace TinyOPDS
             try
             {
                 // Extract all version tags
-                var matches = Regex.Matches(jsonResponse, "\"name\"\\s*:\\s*\"(v[0-9]+\\.[0-9]+)\"");
+                var matches = Regex.Matches(jsonResponse, "\"name\"\\s*:\\s*\"(v[0-9]+(?:\\.[0-9]+){1,3})\"");
 
                 if (matches.Count > 0)
                 {
@@ -253,36 +253,15 @@ namespace TinyOPDS
         }
 
         /// <summary>
-        /// Parse version from tag string (v2.0, v2.1, etc.)
+        /// Parse version from tag string (v3.22, v3.22.5, 3.22.5.1)
         /// </summary>
-        private Version ParseVersion(string tag)
+        private static Version ParseVersion(string tag)
         {
-            try
-            {
-                string versionString = tag.TrimStart('v', 'V');
-                string[] parts = versionString.Split('.');
-
-                if (parts.Length >= 2)
-                {
-                    if (int.TryParse(parts[0], out int major) &&
-                        int.TryParse(parts[1], out int minor))
-                    {
-                        return new Version(major, minor);
-                    }
-                }
-                else if (parts.Length == 1)
-                {
-                    if (int.TryParse(parts[0], out int major))
-                    {
-                        return new Version(major, 0);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.WriteLine(LogLevel.Warning, "Error parsing version '{0}': {1}", tag, ex.Message);
-            }
-
+            string v = tag.TrimStart('v', 'V');
+            if (v.IndexOf('.') < 0) v += ".0";
+            Version version;
+            if (Version.TryParse(v, out version)) return version;
+            Log.WriteLine(LogLevel.Warning, "Error parsing version '{0}'", tag);
             return null;
         }
 
@@ -298,15 +277,15 @@ namespace TinyOPDS
 
                 if (latestVersion != null && latestVersion > currentVersion)
                 {
-                    Log.WriteLine(LogLevel.Info, "New version available: {0} (current: {1}.{2})",
-                        latestTag, currentVersion.Major, currentVersion.Minor);
+                    Log.WriteLine(LogLevel.Info, "New version available: {0} (current: {1})",
+                        latestTag, currentVersion.ToString(3));
 
                     OnCheckCompleted(true, latestTag, githubReleasesPage);
                 }
                 else
                 {
-                    Log.WriteLine(LogLevel.Info, "No updates available. Current version {0}.{1} is up to date",
-                        currentVersion.Major, currentVersion.Minor);
+                    Log.WriteLine(LogLevel.Info, "No updates available. Current version {0} is up to date",
+                        currentVersion.ToString(3));
 
                     OnCheckCompleted(false, null, null);
                 }
