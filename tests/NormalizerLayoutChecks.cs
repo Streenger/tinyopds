@@ -95,6 +95,23 @@ internal static class NormalizerLayoutChecks
         return (string)log.GetProperty("LogFileName").GetValue(null, null);
     }
 
+    private static void SetFlags(bool moveBad, bool moveDuplicates)
+    {
+        var type = app.GetType("TinyOPDS.Properties.Settings", true);
+        object settings = type.GetProperty("Default").GetValue(null, null);
+        type.GetProperty("MoveBadBooks").SetValue(settings, moveBad, null);
+        type.GetProperty("MoveDuplicates").SetValue(settings, moveDuplicates, null);
+    }
+
+    private static object Collect(string library, string bad, string dup)
+    {
+        var type = app.GetType("TinyOPDS.NormalizationCollector", true);
+        type.GetMethod("Reset").Invoke(null, null);
+        type.GetMethod("AddBad").Invoke(null, new object[] { bad });
+        type.GetMethod("AddDuplicates").Invoke(null, new object[] { new[] { dup } });
+        return type.GetMethod("MoveAll").Invoke(null, new object[] { library });
+    }
+
     private static void Check(string name, Action<string> test)
     {
         string scenario = Path.Combine(root, (++checks).ToString("00"));
@@ -452,6 +469,25 @@ internal static class NormalizerLayoutChecks
             Console.WriteLine("  physical cores=" + cores + ", logical=" + Environment.ProcessorCount + ", workers=" + workers);
             Equal(true, cores >= 1 && cores <= Environment.ProcessorCount);
             Equal(Math.Max(1, cores - 1), workers);
+        });
+
+        Check("bad and duplicate books stay in place unless their keep options are set", library => {
+            string bad = Path.Combine(library, "bad.zip"), dup = Path.Combine(library, "dup.zip");
+            File.WriteAllText(bad, "x"); File.WriteAllText(dup, "y");
+            string meta = Path.Combine(Directory.GetParent(library).FullName, "libmeta");
+            SetFlags(false, false);
+            object moved = Collect(library, bad, dup);
+            Equal(0, Count(moved, "BadMoved")); Equal(0, Count(moved, "DupMoved"));
+            Equal(true, File.Exists(bad) && File.Exists(dup));
+            Equal(false, Directory.Exists(meta));
+            SetFlags(true, false);
+            moved = Collect(library, bad, dup);
+            Equal(1, Count(moved, "BadMoved")); Equal(0, Count(moved, "DupMoved"));
+            Equal(false, File.Exists(bad)); Equal(true, File.Exists(dup));
+            SetFlags(false, true);
+            moved = Collect(library, bad, dup);
+            Equal(0, Count(moved, "BadMoved")); Equal(1, Count(moved, "DupMoved"));
+            Equal(false, File.Exists(dup));
         });
 
         Console.WriteLine("Checks: " + checks + "; Failures: " + failures);

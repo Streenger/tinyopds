@@ -123,10 +123,10 @@
       <Value Profile="(Default)">True</Value>
     </Setting>
     <Setting Name="MoveDuplicates" Type="System.Boolean" Scope="User">
-      <Value Profile="(Default)">False</Value>
+      <Value Profile="(Default)">True</Value>
     </Setting>
     <Setting Name="MoveBadBooks" Type="System.Boolean" Scope="User">
-      <Value Profile="(Default)">False</Value>
+      <Value Profile="(Default)">True</Value>
     </Setting>
     <Setting Name="MetaPath" Type="System.String" Scope="User">
       <Value Profile="(Default)" />

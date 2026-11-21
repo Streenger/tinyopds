@@ -519,6 +519,9 @@ namespace TinyOPDS
             filterByLanguage.Checked = Settings.Default.FilterBooksByInterfaceLanguage;
             oneInstance.Checked = Settings.Default.OnlyOneInstance;
             darkTheme.Checked = Settings.Default.DarkThemeOnWeb;
+            keepOriginals.Checked = Settings.Default.KeepOriginals;
+            moveBadBooks.Checked = Settings.Default.MoveBadBooks;
+            moveDuplicates.Checked = Settings.Default.MoveDuplicates;
 
             if (Utils.IsLinux) startWithWindows.Enabled = false;
 
@@ -1952,6 +1955,24 @@ namespace TinyOPDS
                 Settings.Default.ServerName = serverName.Text;
                 Settings.Default.Save();
             }
+        }
+
+        private void KeepOriginals_CheckedChanged(object sender, EventArgs e)
+        {
+            Settings.Default.KeepOriginals = keepOriginals.Checked;
+            Settings.Default.Save();
+        }
+
+        private void MoveBadBooks_CheckedChanged(object sender, EventArgs e)
+        {
+            Settings.Default.MoveBadBooks = moveBadBooks.Checked;
+            Settings.Default.Save();
+        }
+
+        private void MoveDuplicates_CheckedChanged(object sender, EventArgs e)
+        {
+            Settings.Default.MoveDuplicates = moveDuplicates.Checked;
+            Settings.Default.Save();
         }
 
         private void checkBox1_CheckedChanged(object sender, EventArgs e)

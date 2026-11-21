@@ -37,6 +37,33 @@
 			<text lang="fr">en mémoire</text>
 			<text lang="pl">w pamięci</text>
 		</property>
+		<property form="MainForm" ctrl="keepOriginals">
+			<text lang="en">Save originals of repaired books</text>
+			<text lang="ru">Сохранять оригиналы исправленных книг</text>
+			<text lang="uk">Зберігати оригінали виправлених книг</text>
+			<text lang="de">Originale reparierter Bücher speichern</text>
+			<text lang="es">Guardar originales de libros reparados</text>
+			<text lang="fr">Conserver les originaux des livres réparés</text>
+			<text lang="pl">Zachowuj oryginały naprawionych książek</text>
+		</property>
+		<property form="MainForm" ctrl="moveBadBooks">
+			<text lang="en">Save bad books</text>
+			<text lang="ru">Сохранять битые книги</text>
+			<text lang="uk">Зберігати биті книги</text>
+			<text lang="de">Defekte Bücher speichern</text>
+			<text lang="es">Guardar libros dañados</text>
+			<text lang="fr">Conserver les livres défectueux</text>
+			<text lang="pl">Zachowuj uszkodzone książki</text>
+		</property>
+		<property form="MainForm" ctrl="moveDuplicates">
+			<text lang="en">Save duplicate books</text>
+			<text lang="ru">Сохранять дубликаты книг</text>
+			<text lang="uk">Зберігати дублікати книг</text>
+			<text lang="de">Doppelte Bücher speichern</text>
+			<text lang="es">Guardar libros duplicados</text>
+			<text lang="fr">Conserver les livres en double</text>
+			<text lang="pl">Zachowuj duplikaty książek</text>
+		</property>
 		<property form="MainForm" ctrl="oneInstance">
 			<text lang="en">Only one instance</text>
 			<text lang="ru">Только один экземпляр</text>

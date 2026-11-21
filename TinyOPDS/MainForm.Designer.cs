@@ -123,6 +123,9 @@ namespace TinyOPDS
             this.tabPage3 = new System.Windows.Forms.TabPage();
             this.darkTheme = new System.Windows.Forms.CheckBox();
             this.oneInstance = new System.Windows.Forms.CheckBox();
+            this.keepOriginals = new System.Windows.Forms.CheckBox();
+            this.moveBadBooks = new System.Windows.Forms.CheckBox();
+            this.moveDuplicates = new System.Windows.Forms.CheckBox();
             this.viewLogFile = new System.Windows.Forms.Button();
             this.label32 = new System.Windows.Forms.Label();
             this.updateCombo = new System.Windows.Forms.ComboBox();
@@ -1231,6 +1234,9 @@ namespace TinyOPDS
             this.tabPage3.BackColor = System.Drawing.SystemColors.Control;
             this.tabPage3.Controls.Add(this.darkTheme);
             this.tabPage3.Controls.Add(this.oneInstance);
+            this.tabPage3.Controls.Add(this.keepOriginals);
+            this.tabPage3.Controls.Add(this.moveBadBooks);
+            this.tabPage3.Controls.Add(this.moveDuplicates);
             this.tabPage3.Controls.Add(this.viewLogFile);
             this.tabPage3.Controls.Add(this.label32);
             this.tabPage3.Controls.Add(this.updateCombo);
@@ -1261,6 +1267,39 @@ namespace TinyOPDS
             this.darkTheme.Text = "Dark theme";
             this.darkTheme.UseVisualStyleBackColor = true;
             this.darkTheme.CheckedChanged += new System.EventHandler(this.checkBox1_CheckedChanged);
+            // 
+            // keepOriginals
+            // 
+            this.keepOriginals.Location = new System.Drawing.Point(733, 640);
+            this.keepOriginals.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
+            this.keepOriginals.Name = "keepOriginals";
+            this.keepOriginals.Size = new System.Drawing.Size(576, 41);
+            this.keepOriginals.TabIndex = 50;
+            this.keepOriginals.Text = "Save originals of repaired books";
+            this.keepOriginals.UseVisualStyleBackColor = true;
+            this.keepOriginals.CheckedChanged += new System.EventHandler(this.KeepOriginals_CheckedChanged);
+            // 
+            // moveBadBooks
+            // 
+            this.moveBadBooks.Location = new System.Drawing.Point(733, 685);
+            this.moveBadBooks.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
+            this.moveBadBooks.Name = "moveBadBooks";
+            this.moveBadBooks.Size = new System.Drawing.Size(576, 41);
+            this.moveBadBooks.TabIndex = 51;
+            this.moveBadBooks.Text = "Save bad books";
+            this.moveBadBooks.UseVisualStyleBackColor = true;
+            this.moveBadBooks.CheckedChanged += new System.EventHandler(this.MoveBadBooks_CheckedChanged);
+            // 
+            // moveDuplicates
+            // 
+            this.moveDuplicates.Location = new System.Drawing.Point(733, 730);
+            this.moveDuplicates.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
+            this.moveDuplicates.Name = "moveDuplicates";
+            this.moveDuplicates.Size = new System.Drawing.Size(576, 41);
+            this.moveDuplicates.TabIndex = 52;
+            this.moveDuplicates.Text = "Save duplicate books";
+            this.moveDuplicates.UseVisualStyleBackColor = true;
+            this.moveDuplicates.CheckedChanged += new System.EventHandler(this.MoveDuplicates_CheckedChanged);
             // 
             // oneInstance
             // 
@@ -1750,6 +1789,9 @@ namespace TinyOPDS
         private System.Windows.Forms.RadioButton radioButton2;
         private System.Windows.Forms.RadioButton radioButton1;
         private System.Windows.Forms.CheckBox oneInstance;
+        private System.Windows.Forms.CheckBox keepOriginals;
+        private System.Windows.Forms.CheckBox moveBadBooks;
+        private System.Windows.Forms.CheckBox moveDuplicates;
         private System.Windows.Forms.PictureBox pictureBox2;
         private System.Windows.Forms.Button clearDownloadsButton;
         private System.Windows.Forms.CheckBox filterByLanguage;

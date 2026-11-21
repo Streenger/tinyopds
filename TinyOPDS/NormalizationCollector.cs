@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using TinyOPDS.Properties;
 
 namespace TinyOPDS
 {
@@ -54,6 +55,8 @@ namespace TinyOPDS
         /// <summary>
         /// Перенести все накопленные файлы в libmeta/bad и libmeta/dup.
         /// Относительные пути разрешаются относительно libraryPath.
+        /// Переносятся только те категории, для которых включены MoveBadBooks / MoveDuplicates;
+        /// иначе файлы остаются на месте.
         /// </summary>
         public static MoveResult MoveAll(string libraryPath)
         {
@@ -71,6 +74,7 @@ namespace TinyOPDS
 
             foreach (string f in bad)
             {
+                if (!Settings.Default.MoveBadBooks) break;
                 string phys = Resolve(libraryPath, f);
                 if (phys != null && LibraryMeta.MoveFileSafely(phys, badDir) != null)
                     result.BadMoved++;
@@ -78,6 +82,7 @@ namespace TinyOPDS
 
             foreach (string f in dup)
             {
+                if (!Settings.Default.MoveDuplicates) break;
                 string phys = Resolve(libraryPath, f);
                 if (phys != null && LibraryMeta.MoveFileSafely(phys, dupDir) != null)
                     result.DupMoved++;
