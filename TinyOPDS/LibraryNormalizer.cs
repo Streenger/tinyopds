@@ -204,6 +204,7 @@ namespace TinyOPDS
             {
                 var index = NormalizerIndex.Load(libraryPath);
                 int sinceSave = 0;
+                var pending = new List<PendingRepair>();
 
                 foreach (string zipPath in Directory
                     .EnumerateFiles(libraryPath, "*.zip", SearchOption.AllDirectories).ToList())
@@ -217,18 +218,22 @@ namespace TinyOPDS
                             continue;
                         }
 
-                        NormalizerIndex.Status status =
-                            RepairSingleArchive(zipPath, libraryPath, keepOriginals, result);
+                        NormalizerIndex.Status? status =
+                            RepairSingleArchive(zipPath, libraryPath, keepOriginals, result, pending);
 
-                        // Failed не записываем: при следующем запуске попробуем снова
-                        if (status != NormalizerIndex.Status.Failed)
+                        // null - книга ждёт общего сброса на диск; Failed не записываем,
+                        // при следующем запуске попробуем снова
+                        if (status.HasValue && status != NormalizerIndex.Status.Failed)
                         {
-                            index.Record(zipPath, status);
-                            if (++sinceSave >= NormalizerIndex.SaveEvery)
-                            {
-                                index.Save();
-                                sinceSave = 0;
-                            }
+                            index.Record(zipPath, status.Value);
+                            sinceSave++;
+                        }
+                        if (pending.Count >= RepairFlushBatch)
+                            sinceSave += CommitRepairs(pending, index, result);
+                        if (sinceSave >= NormalizerIndex.SaveEvery)
+                        {
+                            index.Save();
+                            sinceSave = 0;
                         }
                     }
                     catch (Exception e)
@@ -239,6 +244,7 @@ namespace TinyOPDS
                     }
                 }
 
+                CommitRepairs(pending, index, result);
                 index.Save();
             }
             Log.WriteLine(LogLevel.Info,
@@ -468,8 +474,8 @@ namespace TinyOPDS
         /// Проход C: починка нарушений схемы FB2 внутри архивов.
         /// Архив перезаписывается только если реально были правки.
         /// </summary>
-        private static NormalizerIndex.Status RepairSingleArchive(string zipPath, string libraryPath,
-            bool keepOriginals, NormalizeResult result)
+        private static NormalizerIndex.Status? RepairSingleArchive(string zipPath, string libraryPath,
+            bool keepOriginals, NormalizeResult result, List<PendingRepair> pending)
         {
             var payload = new List<Tuple<string, byte[], DateTimeOffset>>();
             int fixesHere = 0;
@@ -561,9 +567,6 @@ namespace TinyOPDS
                         }
                     }
 
-                    // Данные должны реально лежать на диске ДО замены оригинала: иначе при сбое
-                    // питания или перезагрузке остаётся файл нужного размера, заполненный нулями
-                    outStream.Flush(true);
                 }
 
                 // Проверяем, что новый архив читается и содержит все записи
@@ -573,9 +576,6 @@ namespace TinyOPDS
                         throw new InvalidDataException("repacked archive has " + check.Entries.Count
                             + " entries, expected " + payload.Count);
                 }
-
-                // Атомарная подмена: оригинал не исчезает, пока новый файл не встал на его место
-                File.Replace(tempPath, zipPath, null);
             }
             catch (Exception e)
             {
@@ -586,14 +586,66 @@ namespace TinyOPDS
                 return NormalizerIndex.Status.Failed;
             }
 
-            result.BooksRepaired++;
-            result.RepairFixes += fixesHere;
-            Log.WriteLine(LogLevel.Info,
-                "LibraryNormalizer: fb2 repaired ({0} fixes{2}) \"{1}\"", fixesHere, zipPath,
-                heavyChange ? "" : ", metadata only, no backup");
-
-            return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired;
+            // Оригинал подменяется в CommitRepairs, после сброса всей пачки на диск
+            pending.Add(new PendingRepair
+            {
+                ZipPath = zipPath,
+                TempPath = tempPath,
+                Fixes = fixesHere,
+                Heavy = heavyChange,
+                Status = anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired
+            });
+            return null;
         }
+
+        private const int RepairFlushBatch = 100;
+
+        private sealed class PendingRepair
+        {
+            public string ZipPath, TempPath;
+            public int Fixes;
+            public bool Heavy;
+            public NormalizerIndex.Status Status;
+        }
+
+        /// <summary>
+        /// Сбрасывает на диск пачку починенных временных архивов одним проходом и только потом
+        /// подменяет оригиналы: при сбое питания не остаётся книги нужного размера, заполненной нулями.
+        /// Возвращает число записей, добавленных в индекс.
+        /// </summary>
+        private static int CommitRepairs(List<PendingRepair> pending, NormalizerIndex index, NormalizeResult result)
+        {
+            int recorded = 0;
+            foreach (var p in pending)
+            {
+                try
+                {
+                    using (var fs = new FileStream(p.TempPath, FileMode.Open, FileAccess.Write, FileShare.Read))
+                        fs.Flush(true);
+                    // Атомарная подмена: оригинал не исчезает, пока новый файл не встал на его место
+                    File.Replace(p.TempPath, p.ZipPath, null);
+                }
+                catch (Exception e)
+                {
+                    result.Errors++;
+                    Log.WriteLine(LogLevel.Error,
+                        "LibraryNormalizer: repack after repair failed \"{0}\": {1}", p.ZipPath, e.Message);
+                    try { if (File.Exists(p.TempPath)) File.Delete(p.TempPath); } catch { }
+                    continue;
+                }
+
+                result.BooksRepaired++;
+                result.RepairFixes += p.Fixes;
+                Log.WriteLine(LogLevel.Info,
+                    "LibraryNormalizer: fb2 repaired ({0} fixes{2}) \"{1}\"", p.Fixes, p.ZipPath,
+                    p.Heavy ? "" : ", metadata only, no backup");
+                index.Record(p.ZipPath, p.Status);
+                recorded++;
+            }
+            pending.Clear();
+            return recorded;
+        }
+
 
         /// <summary>
         /// Чинит один fb2 в памяти. Возвращает null, если правок не было

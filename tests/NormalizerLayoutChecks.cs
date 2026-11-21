@@ -53,6 +53,37 @@ internal static class NormalizerLayoutChecks
         return (int)result.GetType().GetField(field).GetValue(result);
     }
 
+    // FB2 without document-info: the repair pass must add it (metadata-only fix).
+    private static void RepairableBook(string zipPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(zipPath));
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        using (var writer = new StreamWriter(zip.CreateEntry("book.fb2").Open(), new UTF8Encoding(false)))
+            writer.Write("<?xml version=\"1.0\" encoding=\"utf-8\"?><FictionBook xmlns=\"http://www.gribuser.ru/xml/fictionbook/2.0\">"
+                + "<description><title-info><genre>prose</genre><author><first-name>A</first-name><last-name>B</last-name></author>"
+                + "<book-title>T</book-title><lang>ru</lang></title-info></description><body><section><p>x</p></section></body></FictionBook>");
+    }
+
+    private static bool HasDocumentInfo(string zipPath)
+    {
+        using (var zip = ZipFile.OpenRead(zipPath))
+        using (var reader = new StreamReader(zip.Entries[0].Open()))
+            return reader.ReadToEnd().Contains("document-info");
+    }
+
+    // The normalizer index lives next to the running exe; keep runs independent.
+    private static object Repair(string library)
+    {
+        string index = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "normalized.index");
+        if (File.Exists(index)) File.Delete(index);
+        try
+        {
+            return app.GetType("TinyOPDS.LibraryNormalizer", true).GetMethod("Normalize")
+                .Invoke(null, new object[] { library, false, true });
+        }
+        finally { if (File.Exists(index)) File.Delete(index); }
+    }
+
     private static string EnableFileLog(string library)
     {
         string folder = Path.Combine(Directory.GetParent(library).FullName, "logs");
@@ -377,6 +408,29 @@ internal static class NormalizerLayoutChecks
             Equal(1024, Directory.GetFiles(folder, "*.zip").Length);
             foreach (string name in entries)
                 Book(Path.Combine(folder, Path.GetFileNameWithoutExtension(name) + ".zip"), name, name);
+        });
+
+        Check("repair pass replaces 250 books across flush batches without temp files", library => {
+            for (int i = 0; i < 250; i++) RepairableBook(Path.Combine(library, "r" + i.ToString("000") + ".zip"));
+            object result = Repair(library);
+            Equal(0, Count(result, "Errors"));
+            Equal(250, Count(result, "BooksRepaired"));
+            Equal(0, Directory.GetFiles(library, "*.tmp", SearchOption.AllDirectories).Length);
+            foreach (string zip in Directory.GetFiles(library, "*.zip")) Equal(true, HasDocumentInfo(zip));
+        });
+
+        Check("locked original stays intact while the rest of the batch is repaired", library => {
+            for (int i = 0; i < 3; i++) RepairableBook(Path.Combine(library, "l" + i + ".zip"));
+            string locked = Path.Combine(library, "l1.zip");
+            string before = Convert.ToBase64String(File.ReadAllBytes(locked));
+            object result;
+            using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read))
+                result = Repair(library);
+            Equal(1, Count(result, "Errors"));
+            Equal(2, Count(result, "BooksRepaired"));
+            Equal(before, Convert.ToBase64String(File.ReadAllBytes(locked)));
+            Equal(true, HasDocumentInfo(Path.Combine(library, "l0.zip")));
+            Equal(0, Directory.GetFiles(library, "*.tmp", SearchOption.AllDirectories).Length);
         });
 
         Console.WriteLine("Checks: " + checks + "; Failures: " + failures);
