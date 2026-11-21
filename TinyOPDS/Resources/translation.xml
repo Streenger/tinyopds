@@ -38,31 +38,31 @@
 			<text lang="pl">w pamięci</text>
 		</property>
 		<property form="MainForm" ctrl="keepOriginals">
-			<text lang="en">Keep originals of repaired books in libmeta</text>
-			<text lang="ru">Хранить оригиналы исправленных книг в libmeta</text>
-			<text lang="uk">Зберігати оригінали виправлених книг у libmeta</text>
-			<text lang="de">Originale reparierter Bücher in libmeta behalten</text>
-			<text lang="es">Conservar originales de libros reparados en libmeta</text>
-			<text lang="fr">Garder les originaux des livres réparés dans libmeta</text>
-			<text lang="pl">Zachowuj oryginały naprawionych książek w libmeta</text>
+			<text lang="en">Keep originals in libmeta</text>
+			<text lang="ru">Хранить оригиналы в libmeta</text>
+			<text lang="uk">Зберігати оригінали в libmeta</text>
+			<text lang="de">Originale in libmeta behalten</text>
+			<text lang="es">Guardar originales en libmeta</text>
+			<text lang="fr">Garder originaux dans libmeta</text>
+			<text lang="pl">Zachowuj oryginały w libmeta</text>
 		</property>
 		<property form="MainForm" ctrl="moveBadBooks">
-			<text lang="en">Keep bad books in libmeta (otherwise delete)</text>
-			<text lang="ru">Хранить битые книги в libmeta (иначе удалять)</text>
-			<text lang="uk">Зберігати биті книги в libmeta (інакше видаляти)</text>
-			<text lang="de">Defekte Bücher in libmeta behalten (sonst löschen)</text>
-			<text lang="es">Conservar libros dañados en libmeta (si no, eliminar)</text>
-			<text lang="fr">Garder les livres défectueux dans libmeta (sinon supprimer)</text>
-			<text lang="pl">Zachowuj uszkodzone książki w libmeta (inaczej usuń)</text>
+			<text lang="en">Keep bad books (else delete)</text>
+			<text lang="ru">Хранить битые (иначе удалять)</text>
+			<text lang="uk">Зберігати биті (інакше видаляти)</text>
+			<text lang="de">Defekte behalten (sonst löschen)</text>
+			<text lang="es">Guardar dañados (si no, borrar)</text>
+			<text lang="fr">Garder défectueux (sinon effacer)</text>
+			<text lang="pl">Zachowuj uszkodzone (inaczej usuń)</text>
 		</property>
 		<property form="MainForm" ctrl="moveDuplicates">
-			<text lang="en">Keep duplicates in libmeta (otherwise delete)</text>
-			<text lang="ru">Хранить дубликаты в libmeta (иначе удалять)</text>
-			<text lang="uk">Зберігати дублікати в libmeta (інакше видаляти)</text>
-			<text lang="de">Duplikate in libmeta behalten (sonst löschen)</text>
-			<text lang="es">Conservar duplicados en libmeta (si no, eliminar)</text>
-			<text lang="fr">Garder les doublons dans libmeta (sinon supprimer)</text>
-			<text lang="pl">Zachowuj duplikaty w libmeta (inaczej usuń)</text>
+			<text lang="en">Keep duplicates (else delete)</text>
+			<text lang="ru">Хранить дубли (иначе удалять)</text>
+			<text lang="uk">Зберігати дублі (інакше видаляти)</text>
+			<text lang="de">Duplikate behalten (sonst löschen)</text>
+			<text lang="es">Guardar duplicados (si no, borrar)</text>
+			<text lang="fr">Garder doublons (sinon effacer)</text>
+			<text lang="pl">Zachowuj duplikaty (inaczej usuń)</text>
 		</property>
 		<property form="MainForm" ctrl="oneInstance">
 			<text lang="en">Only one instance</text>

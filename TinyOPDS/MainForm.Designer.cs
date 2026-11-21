@@ -1270,34 +1270,34 @@ namespace TinyOPDS
             // 
             // keepOriginals
             // 
-            this.keepOriginals.Location = new System.Drawing.Point(733, 640);
+            this.keepOriginals.Location = new System.Drawing.Point(733, 450);
             this.keepOriginals.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
             this.keepOriginals.Name = "keepOriginals";
-            this.keepOriginals.Size = new System.Drawing.Size(576, 41);
+            this.keepOriginals.Size = new System.Drawing.Size(620, 41);
             this.keepOriginals.TabIndex = 50;
-            this.keepOriginals.Text = "Keep originals of repaired books in libmeta";
+            this.keepOriginals.Text = "Keep originals in libmeta";
             this.keepOriginals.UseVisualStyleBackColor = true;
             this.keepOriginals.CheckedChanged += new System.EventHandler(this.KeepOriginals_CheckedChanged);
             // 
             // moveBadBooks
             // 
-            this.moveBadBooks.Location = new System.Drawing.Point(733, 685);
+            this.moveBadBooks.Location = new System.Drawing.Point(733, 495);
             this.moveBadBooks.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
             this.moveBadBooks.Name = "moveBadBooks";
-            this.moveBadBooks.Size = new System.Drawing.Size(576, 41);
+            this.moveBadBooks.Size = new System.Drawing.Size(620, 41);
             this.moveBadBooks.TabIndex = 51;
-            this.moveBadBooks.Text = "Keep bad books in libmeta (otherwise delete)";
+            this.moveBadBooks.Text = "Keep bad books (else delete)";
             this.moveBadBooks.UseVisualStyleBackColor = true;
             this.moveBadBooks.CheckedChanged += new System.EventHandler(this.MoveBadBooks_CheckedChanged);
             // 
             // moveDuplicates
             // 
-            this.moveDuplicates.Location = new System.Drawing.Point(733, 730);
+            this.moveDuplicates.Location = new System.Drawing.Point(733, 540);
             this.moveDuplicates.Margin = new System.Windows.Forms.Padding(3, 2, 3, 2);
             this.moveDuplicates.Name = "moveDuplicates";
-            this.moveDuplicates.Size = new System.Drawing.Size(576, 41);
+            this.moveDuplicates.Size = new System.Drawing.Size(620, 41);
             this.moveDuplicates.TabIndex = 52;
-            this.moveDuplicates.Text = "Keep duplicates in libmeta (otherwise delete)";
+            this.moveDuplicates.Text = "Keep duplicates (else delete)";
             this.moveDuplicates.UseVisualStyleBackColor = true;
             this.moveDuplicates.CheckedChanged += new System.EventHandler(this.MoveDuplicates_CheckedChanged);
             // 
@@ -1314,7 +1314,7 @@ namespace TinyOPDS
             // 
             // viewLogFile
             // 
-            this.viewLogFile.Location = new System.Drawing.Point(733, 556);
+            this.viewLogFile.Location = new System.Drawing.Point(733, 620);
             this.viewLogFile.Margin = new System.Windows.Forms.Padding(8, 7, 8, 7);
             this.viewLogFile.Name = "viewLogFile";
             this.viewLogFile.Size = new System.Drawing.Size(496, 55);
