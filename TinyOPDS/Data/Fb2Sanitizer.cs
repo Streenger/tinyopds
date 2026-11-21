@@ -125,6 +125,17 @@ namespace TinyOPDS.Data
                 mark = count;
             };
 
+            // encoding="UTF8" и подобные: .NET такого имени не знает, файл не открывается
+            text = Regex.Replace(text, @"^(\s*<\?xml[^>]*?\bencoding\s*=\s*[""'])(utf[-_ ]?8)([""'])",
+                m =>
+                {
+                    if (m.Groups[2].Value.Equals("utf-8", StringComparison.OrdinalIgnoreCase)) return m.Value;
+                    count++;
+                    return m.Groups[1].Value + "utf-8" + m.Groups[3].Value;
+                },
+                RegexOptions.IgnoreCase);
+            note("enc");
+
             text = StripNameSpaces(text, ref count);
             note("ns");
 

@@ -995,7 +995,7 @@ namespace TinyOPDS
     internal sealed class NormalizerIndex
     {
         /// <summary>Версия логики починки. Увеличивать при улучшении Fb2Sanitizer/Fb2Repair.</summary>
-        public const int Version = 3;
+        public const int Version = 4;
 
         // Записи Clean/Repaired с версией ниже этой перепроверяются: версия 2 начала
         // записывать в книги id документа и даты (document-info и дата книги по году издания),

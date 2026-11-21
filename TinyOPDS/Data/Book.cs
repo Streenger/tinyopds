@@ -355,6 +355,12 @@ namespace TinyOPDS.Data
             if (string.IsNullOrEmpty(Title) || Authors == null || Authors.Count == 0)
                 return string.Empty;
 
+            // Книги без названия (пустое или Unknown) по названию не сравниваем:
+            // разные книги одного автора иначе заменяли бы друг друга
+            string trimmedTitle = Title.Trim();
+            if (trimmedTitle.Length == 0 || trimmedTitle.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+
             // Extract volume info
             var (original, normalized) = ExtractVolumeInfo(Title);
 

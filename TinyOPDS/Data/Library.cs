@@ -1081,10 +1081,14 @@ namespace TinyOPDS.Data
                 {
                     IsChanged = true;
 
-                    // Force immediate synchronous cache refresh for batch operations
-                    lock (cacheLock)
+                    // Во время сканирования статистику пересчитываем раз в несколько пачек,
+                    // остаток - в ReleaseKnownFiles в конце сканирования
+                    if (NextBatchRefreshesStats(knownFiles != null, ref batchesSinceStats))
                     {
-                        RefreshCacheInternal();
+                        lock (cacheLock)
+                        {
+                            RefreshCacheInternal();
+                        }
                     }
                 }
 
@@ -1214,6 +1218,25 @@ namespace TinyOPDS.Data
         public static void ReleaseKnownFiles()
         {
             knownFiles = null;
+            if (batchesSinceStats > 0)
+            {
+                batchesSinceStats = 0;
+                System.Threading.Tasks.Task.Run(() => { lock (cacheLock) { RefreshCacheInternal(); } });
+            }
+        }
+
+        private const int StatsEveryBatches = 10;
+        private static int batchesSinceStats;
+
+        /// <summary>
+        /// Вне сканирования статистика обновляется после каждой пачки, при сканировании - раз в 10 пачек
+        /// </summary>
+        internal static bool NextBatchRefreshesStats(bool scanning, ref int counter)
+        {
+            if (!scanning) { counter = 0; return true; }
+            if (++counter < StatsEveryBatches) return false;
+            counter = 0;
+            return true;
         }
 
         /// <summary>
