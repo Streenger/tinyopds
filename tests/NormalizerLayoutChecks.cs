@@ -433,6 +433,27 @@ internal static class NormalizerLayoutChecks
             Equal(0, Directory.GetFiles(library, "*.tmp", SearchOption.AllDirectories).Length);
         });
 
+        Check("corrupt archive is reported without stalling the parallel repair", library => {
+            for (int i = 0; i < 40; i++) RepairableBook(Path.Combine(library, "c" + i.ToString("00") + ".zip"));
+            string broken = Path.Combine(library, "c20.zip");
+            File.WriteAllBytes(broken, Encoding.ASCII.GetBytes("not a zip"));
+            object result = Repair(library);
+            Equal(2, Count(result, "Errors"));   // the split pass and the repair pass both reject it
+            Equal(39, Count(result, "BooksRepaired"));
+            Equal("not a zip", File.ReadAllText(broken));
+            Equal(0, Directory.GetFiles(library, "*.tmp", SearchOption.AllDirectories).Length);
+        });
+
+        Check("repair workers are physical cores minus one", library => {
+            var t = app.GetType("TinyOPDS.LibraryNormalizer", true);
+            var flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+            int cores = (int)t.GetMethod("PhysicalCores", flags).Invoke(null, null);
+            int workers = (int)t.GetMethod("RepairWorkers", flags).Invoke(null, null);
+            Console.WriteLine("  physical cores=" + cores + ", logical=" + Environment.ProcessorCount + ", workers=" + workers);
+            Equal(true, cores >= 1 && cores <= Environment.ProcessorCount);
+            Equal(Math.Max(1, cores - 1), workers);
+        });
+
         Console.WriteLine("Checks: " + checks + "; Failures: " + failures);
         return failures == 0 ? 0 : 1;
     }

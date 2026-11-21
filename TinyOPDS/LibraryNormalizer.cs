@@ -4,6 +4,8 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
 using TinyOPDS;
@@ -203,8 +205,7 @@ namespace TinyOPDS
             if (repairFb2)
             {
                 var index = NormalizerIndex.Load(libraryPath);
-                int sinceSave = 0;
-                var pending = new List<PendingRepair>();
+                var todo = new List<string>();
 
                 foreach (string zipPath in Directory
                     .EnumerateFiles(libraryPath, "*.zip", SearchOption.AllDirectories).ToList())
@@ -212,29 +213,8 @@ namespace TinyOPDS
                     try
                     {
                         // Уже нормализован и не менялся - не читаем архив вовсе
-                        if (index.IsUpToDate(zipPath))
-                        {
-                            result.ArchivesSkippedIndexed++;
-                            continue;
-                        }
-
-                        NormalizerIndex.Status? status =
-                            RepairSingleArchive(zipPath, libraryPath, keepOriginals, result, pending);
-
-                        // null - книга ждёт общего сброса на диск; Failed не записываем,
-                        // при следующем запуске попробуем снова
-                        if (status.HasValue && status != NormalizerIndex.Status.Failed)
-                        {
-                            index.Record(zipPath, status.Value);
-                            sinceSave++;
-                        }
-                        if (pending.Count >= RepairFlushBatch)
-                            sinceSave += CommitRepairs(pending, index, result);
-                        if (sinceSave >= NormalizerIndex.SaveEvery)
-                        {
-                            index.Save();
-                            sinceSave = 0;
-                        }
+                        if (index.IsUpToDate(zipPath)) result.ArchivesSkippedIndexed++;
+                        else todo.Add(zipPath);
                     }
                     catch (Exception e)
                     {
@@ -244,7 +224,7 @@ namespace TinyOPDS
                     }
                 }
 
-                CommitRepairs(pending, index, result);
+                RepairInParallel(todo, libraryPath, keepOriginals, index, result);
                 index.Save();
             }
             Log.WriteLine(LogLevel.Info,
@@ -470,20 +450,219 @@ namespace TinyOPDS
                 bookPath, newZipPath);
         }
 
+        private const long RepairMemoryBudget = 2L << 30;   // архивы в очередях и в работе, байт
+
+        private sealed class RepairJob
+        {
+            public string ZipPath;
+            public long Reserved;
+            public byte[] Source, NewArchive;   // исходный и починенный zip целиком в памяти
+            public Exception Error;
+            public int Fixes;
+            public bool Heavy;
+            public NormalizerIndex.Status Status;
+        }
+
         /// <summary>
-        /// Проход C: починка нарушений схемы FB2 внутри архивов.
-        /// Архив перезаписывается только если реально были правки.
+        /// Сколько потоков разбора: физические ядра минус одно (его оставляем системе и потокам
+        /// чтения/записи). Считаем, что физических ядер минимум 2, значит потоков минимум 1.
         /// </summary>
-        private static NormalizerIndex.Status? RepairSingleArchive(string zipPath, string libraryPath,
-            bool keepOriginals, NormalizeResult result, List<PendingRepair> pending)
+        internal static int RepairWorkers()
+        {
+            return Math.Max(1, PhysicalCores() - 1);
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetLogicalProcessorInformationEx(int relationship, IntPtr buffer, ref int length);
+
+        /// <summary>
+        /// Число физических ядер по GetLogicalProcessorInformationEx(RelationProcessorCore).
+        /// Если Windows не ответила, берём логические ядра пополам (типичный HyperThreading).
+        /// </summary>
+        internal static int PhysicalCores()
+        {
+            const int RelationProcessorCore = 0;
+            int length = 0;
+            GetLogicalProcessorInformationEx(RelationProcessorCore, IntPtr.Zero, ref length);
+            if (length > 0)
+            {
+                IntPtr buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(length);
+                try
+                {
+                    if (GetLogicalProcessorInformationEx(RelationProcessorCore, buffer, ref length))
+                    {
+                        // Каждая запись: Relationship (int), Size (int), ...; одна запись = одно ядро
+                        int cores = 0;
+                        for (int offset = 0; offset < length; cores++)
+                            offset += System.Runtime.InteropServices.Marshal.ReadInt32(buffer, offset + 4);
+                        if (cores > 0) return cores;
+                    }
+                }
+                finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer); }
+            }
+            return Math.Max(2, Environment.ProcessorCount / 2);
+        }
+
+        /// <summary>
+        /// Проход C: конвейер "чтение - разбор - запись". Один поток читает архивы с диска подряд,
+        /// несколько потоков чинят FB2 и собирают новый zip в памяти, вызывающий поток пишет
+        /// результаты на диск по одному и подменяет оригиналы пачками после сброса на диск.
+        /// Индекс, счётчики и резервные копии трогает только вызывающий поток.
+        /// </summary>
+        private static void RepairInParallel(List<string> todo, string libraryPath, bool keepOriginals,
+            NormalizerIndex index, NormalizeResult result)
+        {
+            int workers = RepairWorkers();
+            Log.WriteLine(LogLevel.Info,
+                "LibraryNormalizer: repair pass for {0} archives, {1} workers ({2} physical cores, {3} logical)",
+                todo.Count, workers, PhysicalCores(), Environment.ProcessorCount);
+
+            var budget = new MemoryBudget(RepairMemoryBudget);
+            var total = System.Diagnostics.Stopwatch.StartNew();
+            long readTicks = 0, prepareTicks = 0, stageTicks = 0, waitTicks = 0;
+            commitFlushTicks = commitReplaceTicks = 0;
+            using (var input = new BlockingCollection<RepairJob>(workers * 4))
+            using (var output = new BlockingCollection<RepairJob>(workers * 4))
+            {
+                Task reader = Task.Run(() =>
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        foreach (string zipPath in todo)
+                        {
+                            var job = new RepairJob { ZipPath = zipPath };
+                            try
+                            {
+                                // исходник и новый архив примерно одного размера
+                                job.Reserved = budget.Acquire(2 * new FileInfo(zipPath).Length);
+                                job.Source = File.ReadAllBytes(zipPath);
+                            }
+                            catch (Exception e) { job.Error = e; }
+                            input.Add(job);
+                        }
+                    }
+                    finally { readTicks = sw.ElapsedTicks; input.CompleteAdding(); }
+                });
+
+                var cpu = new Task[workers];
+                for (int i = 0; i < workers; i++)
+                    cpu[i] = Task.Run(() =>
+                    {
+                        foreach (RepairJob job in input.GetConsumingEnumerable())
+                        {
+                            if (job.Error == null)
+                            {
+                                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                                try { PrepareRepair(job); }
+                                catch (Exception e) { job.Error = e; }
+                                System.Threading.Interlocked.Add(ref prepareTicks,
+                                    System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+                            }
+                            job.Source = null;
+                            output.Add(job);
+                        }
+                    });
+                Task.WhenAll(cpu).ContinueWith(t => output.CompleteAdding());
+
+                var pending = new List<PendingRepair>();
+                int sinceSave = 0;
+                long waitFrom = System.Diagnostics.Stopwatch.GetTimestamp();
+                while (true)
+                {
+                    RepairJob job;
+                    if (!output.TryTake(out job))
+                    {
+                        // Разбор отстаёт: сбрасываем накопленное, заодно возвращая память читателю
+                        if (pending.Count > 0) sinceSave += CommitRepairs(pending, index, result, budget);
+                        if (!output.TryTake(out job, System.Threading.Timeout.Infinite)) break;
+                    }
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    waitTicks += t0 - waitFrom;
+                    int staged = pending.Count;
+                    try { sinceSave += StageRepair(job, libraryPath, keepOriginals, index, result, pending); }
+                    catch (Exception e)
+                    {
+                        result.Errors++;
+                        Log.WriteLine(LogLevel.Error,
+                            "LibraryNormalizer: repair failed \"{0}\": {1}", job.ZipPath, e.Message);
+                    }
+                    finally
+                    {
+                        // Архив, ушедший в пачку, держит память до записи в CommitRepairs
+                        if (pending.Count == staged) budget.Release(job.Reserved);
+                        else pending[staged].Reserved = job.Reserved;
+                        job.NewArchive = null;
+                        stageTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    }
+
+                    if (pending.Count >= RepairFlushBatch)
+                        sinceSave += CommitRepairs(pending, index, result, budget);
+                    if (sinceSave >= NormalizerIndex.SaveEvery)
+                    {
+                        index.Save();
+                        sinceSave = 0;
+                    }
+                    waitFrom = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
+
+                CommitRepairs(pending, index, result, budget);
+                reader.Wait();
+                Task.WaitAll(cpu);
+            }
+
+            // Где уходит время: read - поток чтения целиком, prepare - сумма по потокам разбора,
+            // wait - запись ждала разбор, stage - резервные копии, flush - запись пачки, replace - подмена
+            Func<long, string> sec = t => (t / (double)System.Diagnostics.Stopwatch.Frequency).ToString("0.0");
+            Log.WriteLine(LogLevel.Info,
+                "LibraryNormalizer: repair timing total={0}s read={1}s prepare={2}s ({3} workers) wait={4}s stage={5}s flush={6}s replace={7}s",
+                sec(total.ElapsedTicks), sec(readTicks), sec(prepareTicks), workers, sec(waitTicks),
+                sec(stageTicks), sec(commitFlushTicks), sec(commitReplaceTicks));
+        }
+
+        /// <summary>
+        /// Ограничивает объём архивов в памяти: чтение ждёт, пока запись не освободит место.
+        /// Архив больше всего бюджета берёт бюджет целиком и идёт один.
+        /// </summary>
+        private sealed class MemoryBudget
+        {
+            private readonly long limit;
+            private long free;
+
+            public MemoryBudget(long limit) { this.limit = free = limit; }
+
+            public long Acquire(long bytes)
+            {
+                bytes = Math.Max(1, Math.Min(bytes, limit));
+                lock (this)
+                {
+                    while (free < bytes) System.Threading.Monitor.Wait(this);
+                    free -= bytes;
+                }
+                return bytes;
+            }
+
+            public void Release(long bytes)
+            {
+                if (bytes == 0) return;
+                lock (this)
+                {
+                    free += bytes;
+                    System.Threading.Monitor.PulseAll(this);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Чинит FB2 внутри архива целиком в памяти, без диска; безопасно для нескольких потоков.
+        /// Новый zip собирается, только если реально были правки.
+        /// </summary>
+        private static void PrepareRepair(RepairJob job)
         {
             var payload = new List<Tuple<string, byte[], DateTimeOffset>>();
-            int fixesHere = 0;
-            bool changed = false;
-            bool heavyChange = false;   // были правки содержимого, а не только id/дат
-            bool anyUnrepairable = false;
+            bool changed = false, anyUnrepairable = false;
 
-            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Read, Latin1))
+            using (var archive = new ZipArchive(new MemoryStream(job.Source, false), ZipArchiveMode.Read, false, Latin1))
             {
                 foreach (var entry in archive.Entries)
                 {
@@ -503,16 +682,16 @@ namespace TinyOPDS
                         int fixes;
                         bool unrepairable;
                         bool lightOnly;
-                        byte[] repaired = RepairFb2Bytes(data, zipPath,
-                            zipPath + "@" + FixEntryName(entry.FullName),
+                        byte[] repaired = RepairFb2Bytes(data, job.ZipPath,
+                            job.ZipPath + "@" + FixEntryName(entry.FullName),
                             entry.LastWriteTime.DateTime, out fixes, out lightOnly, out unrepairable);
                         if (unrepairable) anyUnrepairable = true;
                         if (repaired != null && fixes > 0)
                         {
                             data = repaired;
-                            fixesHere += fixes;
+                            job.Fixes += fixes;
                             changed = true;
-                            if (!lightOnly) heavyChange = true;
+                            if (!lightOnly) job.Heavy = true;   // правки содержимого, а не только id/дат
                         }
                     }
 
@@ -520,89 +699,120 @@ namespace TinyOPDS
                     payload.Add(Tuple.Create(
                         FixEntryName(entry.FullName), data, entry.LastWriteTime));
                 }
-            }   // архив закрыт
-
-            if (!changed)
-                return anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Clean;
-
-            // резервная копия до правки: только для содержательных правок.
-            // Дописанные id и даты (и перестановка элементов описания) текст книги не меняют
-            if (keepOriginals && heavyChange)
-            {
-                try
-                {
-                    string origDir = LibraryMeta.GetOrigDir(libraryPath);
-                    LibraryMeta.MoveFileSafely(zipPath, origDir, copyInsteadOfMove: true);
-                }
-                catch (Exception e)
-                {
-                    Log.WriteLine(LogLevel.Warning,
-                        "LibraryNormalizer: backup before repair failed \"{0}\": {1}", zipPath, e.Message);
-                }
             }
 
-            // пишем во временный файл, затем подменяем
-            string tempPath = zipPath + ".repair.tmp";
-            try
+            if (!changed)
             {
-                using (var outStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
+                job.Status = anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Clean;
+                return;
+            }
+            job.Status = anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired;
+
+            using (var outStream = new MemoryStream())
+            {
+                using (var newArchive = new ZipArchive(outStream, ZipArchiveMode.Create,
+                    true, new UTF8Encoding(false)))
                 {
-                    using (var newArchive = new ZipArchive(outStream, ZipArchiveMode.Create,
-                        true, new UTF8Encoding(false)))
+                    foreach (var item in payload)
                     {
-                        foreach (var item in payload)
+                        var newEntry = newArchive.CreateEntry(item.Item1, CompressionLevel.Optimal);
+
+                        // zip хранит даты только с 1980 по 2107 — вне диапазона setter бросает
+                        try
                         {
-                            var newEntry = newArchive.CreateEntry(item.Item1, CompressionLevel.Optimal);
-
-                            // zip хранит даты только с 1980 по 2107 — вне диапазона setter бросает
-                            try
-                            {
-                                if (item.Item3.Year >= 1980 && item.Item3.Year <= 2107)
-                                    newEntry.LastWriteTime = item.Item3;
-                            }
-                            catch (ArgumentOutOfRangeException) { }
-
-                            using (var dst = newEntry.Open())
-                                dst.Write(item.Item2, 0, item.Item2.Length);
+                            if (item.Item3.Year >= 1980 && item.Item3.Year <= 2107)
+                                newEntry.LastWriteTime = item.Item3;
                         }
-                    }
+                        catch (ArgumentOutOfRangeException) { }
 
+                        using (var dst = newEntry.Open())
+                            dst.Write(item.Item2, 0, item.Item2.Length);
+                    }
                 }
 
                 // Проверяем, что новый архив читается и содержит все записи
-                using (var check = ZipFile.OpenRead(tempPath))
+                outStream.Position = 0;
+                using (var check = new ZipArchive(outStream, ZipArchiveMode.Read, true))
                 {
                     if (check.Entries.Count != payload.Count)
                         throw new InvalidDataException("repacked archive has " + check.Entries.Count
                             + " entries, expected " + payload.Count);
                 }
+                job.NewArchive = outStream.ToArray();
             }
-            catch (Exception e)
+        }
+
+        /// <summary>
+        /// Пишет готовый архив во временный файл рядом с оригиналом и ставит его в очередь на подмену.
+        /// Возвращает число записей, добавленных в индекс.
+        /// </summary>
+        private static int StageRepair(RepairJob job, string libraryPath, bool keepOriginals,
+            NormalizerIndex index, NormalizeResult result, List<PendingRepair> pending)
+        {
+            if (job.Error != null)
             {
                 result.Errors++;
                 Log.WriteLine(LogLevel.Error,
-                    "LibraryNormalizer: repack after repair failed \"{0}\": {1}", zipPath, e.Message);
-                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                return NormalizerIndex.Status.Failed;
+                    "LibraryNormalizer: repair failed \"{0}\": {1}", job.ZipPath, job.Error.Message);
+                return 0;
             }
 
-            // Оригинал подменяется в CommitRepairs, после сброса всей пачки на диск
+            if (job.NewArchive == null)
+            {
+                index.Record(job.ZipPath, job.Status);
+                return 1;
+            }
+
+            // резервная копия до правки: только для содержательных правок.
+            // Дописанные id и даты (и перестановка элементов описания) текст книги не меняют
+            if (keepOriginals && job.Heavy)
+            {
+                try
+                {
+                    string origDir = LibraryMeta.GetOrigDir(libraryPath);
+                    LibraryMeta.MoveFileSafely(job.ZipPath, origDir, copyInsteadOfMove: true);
+                }
+                catch (Exception e)
+                {
+                    Log.WriteLine(LogLevel.Warning,
+                        "LibraryNormalizer: backup before repair failed \"{0}\": {1}", job.ZipPath, e.Message);
+                }
+            }
+
+            // Запись и подмена оригинала - в CommitRepairs, всей пачкой
             pending.Add(new PendingRepair
             {
-                ZipPath = zipPath,
-                TempPath = tempPath,
-                Fixes = fixesHere,
-                Heavy = heavyChange,
-                Status = anyUnrepairable ? NormalizerIndex.Status.Unrepairable : NormalizerIndex.Status.Repaired
+                ZipPath = job.ZipPath,
+                TempPath = job.ZipPath + ".repair.tmp",
+                Data = job.NewArchive,
+                Fixes = job.Fixes,
+                Heavy = job.Heavy,
+                Status = job.Status
             });
-            return null;
+            return 0;
         }
 
         private const int RepairFlushBatch = 100;
+        private static long commitFlushTicks, commitReplaceTicks;   // только для строки repair timing
+
+        private const int MOVEFILE_REPLACE_EXISTING = 1;
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern bool MoveFileEx(string existingFileName, string newFileName, int flags);
+
+        // Префикс \\?\ снимает предел MAX_PATH у прямых вызовов WinAPI
+        private static string LongPath(string path)
+        {
+            if (path.StartsWith(@"\\?\")) return path;
+            path = Path.GetFullPath(path);
+            return path.StartsWith(@"\\") ? @"\\?\UNC\" + path.Substring(2) : @"\\?\" + path;
+        }
 
         private sealed class PendingRepair
         {
             public string ZipPath, TempPath;
+            public byte[] Data;
+            public long Reserved;
             public int Fixes;
             public bool Heavy;
             public NormalizerIndex.Status Status;
@@ -613,23 +823,52 @@ namespace TinyOPDS
         /// подменяет оригиналы: при сбое питания не остаётся книги нужного размера, заполненной нулями.
         /// Возвращает число записей, добавленных в индекс.
         /// </summary>
-        private static int CommitRepairs(List<PendingRepair> pending, NormalizerIndex index, NormalizeResult result)
+        private static int CommitRepairs(List<PendingRepair> pending, NormalizerIndex index, NormalizeResult result,
+            MemoryBudget budget)
         {
-            int recorded = 0;
-            foreach (var p in pending)
-            {
-                try
+            // Запись и сброс ждут устройство, а не процессор: файлы пачки пишутся параллельно
+            var flushError = new Exception[pending.Count];
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            System.Threading.Tasks.Parallel.For(0, pending.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = RepairWorkers() }, i =>
                 {
-                    using (var fs = new FileStream(p.TempPath, FileMode.Open, FileAccess.Write, FileShare.Read))
-                        fs.Flush(true);
-                    // Атомарная подмена: оригинал не исчезает, пока новый файл не встал на его место
-                    File.Replace(p.TempPath, p.ZipPath, null);
-                }
-                catch (Exception e)
+                    try
+                    {
+                        using (var fs = new FileStream(pending[i].TempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                        {
+                            fs.Write(pending[i].Data, 0, pending[i].Data.Length);
+                            fs.Flush(true);
+                        }
+                    }
+                    catch (Exception e) { flushError[i] = e; }
+                    finally
+                    {
+                        pending[i].Data = null;
+                        budget.Release(pending[i].Reserved);
+                    }
+                });
+            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            commitFlushTicks += t1 - t0;
+
+            // Вся пачка уже на диске - теперь подмена оригиналов атомарным переименованием.
+            // File.Replace делает то же, но в разы медленнее
+            System.Threading.Tasks.Parallel.For(0, pending.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = RepairWorkers() }, i =>
+                {
+                    if (flushError[i] != null) return;
+                    if (!MoveFileEx(LongPath(pending[i].TempPath), LongPath(pending[i].ZipPath), MOVEFILE_REPLACE_EXISTING))
+                        flushError[i] = new System.ComponentModel.Win32Exception();
+                });
+
+            int recorded = 0;
+            for (int i = 0; i < pending.Count; i++)
+            {
+                var p = pending[i];
+                if (flushError[i] != null)
                 {
                     result.Errors++;
                     Log.WriteLine(LogLevel.Error,
-                        "LibraryNormalizer: repack after repair failed \"{0}\": {1}", p.ZipPath, e.Message);
+                        "LibraryNormalizer: repack after repair failed \"{0}\": {1}", p.ZipPath, flushError[i].Message);
                     try { if (File.Exists(p.TempPath)) File.Delete(p.TempPath); } catch { }
                     continue;
                 }
@@ -643,6 +882,7 @@ namespace TinyOPDS
                 recorded++;
             }
             pending.Clear();
+            commitReplaceTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
             return recorded;
         }
 
