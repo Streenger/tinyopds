@@ -471,23 +471,34 @@ internal static class NormalizerLayoutChecks
             Equal(Math.Max(1, cores - 1), workers);
         });
 
-        Check("bad and duplicate books stay in place unless their keep options are set", library => {
+        Check("bad and duplicate books are deleted unless their keep options are set", library => {
             string bad = Path.Combine(library, "bad.zip"), dup = Path.Combine(library, "dup.zip");
             File.WriteAllText(bad, "x"); File.WriteAllText(dup, "y");
             string meta = Path.Combine(Directory.GetParent(library).FullName, "libmeta");
-            SetFlags(false, false);
-            object moved = Collect(library, bad, dup);
-            Equal(0, Count(moved, "BadMoved")); Equal(0, Count(moved, "DupMoved"));
-            Equal(true, File.Exists(bad) && File.Exists(dup));
-            Equal(false, Directory.Exists(meta));
             SetFlags(true, false);
-            moved = Collect(library, bad, dup);
+            object moved = Collect(library, bad, dup);
             Equal(1, Count(moved, "BadMoved")); Equal(0, Count(moved, "DupMoved"));
-            Equal(false, File.Exists(bad)); Equal(true, File.Exists(dup));
+            Equal(1, Count(moved, "DupDeleted")); Equal(0, Count(moved, "BadDeleted"));
+            Equal(false, File.Exists(bad)); Equal(false, File.Exists(dup));
+            Equal(1, Directory.GetFiles(Path.Combine(meta, "bad")).Length);
+            Equal(false, Directory.Exists(Path.Combine(meta, "dup")));
+            File.WriteAllText(bad, "x"); File.WriteAllText(dup, "y");
             SetFlags(false, true);
             moved = Collect(library, bad, dup);
-            Equal(0, Count(moved, "BadMoved")); Equal(1, Count(moved, "DupMoved"));
-            Equal(false, File.Exists(dup));
+            Equal(1, Count(moved, "BadDeleted")); Equal(1, Count(moved, "DupMoved"));
+            Equal(false, File.Exists(bad)); Equal(false, File.Exists(dup));
+            Equal(1, Directory.GetFiles(Path.Combine(meta, "dup")).Length);
+        });
+
+        Check("an archive with several books is never deleted as bad or duplicate", library => {
+            string many = Path.Combine(library, "many.zip");
+            Archive(many, "a.fb2", "b.fb2");
+            string single = Path.Combine(library, "single.zip");
+            Archive(single, "a.fb2");
+            SetFlags(false, false);
+            object moved = Collect(library, many + "@a.fb2", single + "@a.fb2");
+            Equal(0, Count(moved, "BadDeleted")); Equal(1, Count(moved, "DupDeleted"));
+            Equal(true, File.Exists(many)); Equal(false, File.Exists(single));
         });
 
         Console.WriteLine("Checks: " + checks + "; Failures: " + failures);

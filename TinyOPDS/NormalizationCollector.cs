@@ -55,8 +55,8 @@ namespace TinyOPDS
         /// <summary>
         /// Перенести все накопленные файлы в libmeta/bad и libmeta/dup.
         /// Относительные пути разрешаются относительно libraryPath.
-        /// Переносятся только те категории, для которых включены MoveBadBooks / MoveDuplicates;
-        /// иначе файлы остаются на месте.
+        /// Для категорий с включённым MoveBadBooks / MoveDuplicates файлы переносятся,
+        /// для остальных — удаляются (чтобы не копить место при слиянии библиотек).
         /// </summary>
         public static MoveResult MoveAll(string libraryPath)
         {
@@ -74,23 +74,69 @@ namespace TinyOPDS
 
             foreach (string f in bad)
             {
-                if (!Settings.Default.MoveBadBooks) break;
                 string phys = Resolve(libraryPath, f);
-                if (phys != null && LibraryMeta.MoveFileSafely(phys, badDir) != null)
-                    result.BadMoved++;
+                if (phys == null) continue;
+                if (Settings.Default.MoveBadBooks)
+                {
+                    if (LibraryMeta.MoveFileSafely(phys, badDir) != null) result.BadMoved++;
+                }
+                else if (DeleteSafely(phys)) result.BadDeleted++;
             }
 
             foreach (string f in dup)
             {
-                if (!Settings.Default.MoveDuplicates) break;
                 string phys = Resolve(libraryPath, f);
-                if (phys != null && LibraryMeta.MoveFileSafely(phys, dupDir) != null)
-                    result.DupMoved++;
+                if (phys == null) continue;
+                if (Settings.Default.MoveDuplicates)
+                {
+                    if (LibraryMeta.MoveFileSafely(phys, dupDir) != null) result.DupMoved++;
+                }
+                else if (DeleteSafely(phys)) result.DupDeleted++;
             }
 
             Log.WriteLine(LogLevel.Info,
-                "NormalizationCollector: moved bad={0}, dup={1}", result.BadMoved, result.DupMoved);
+                "NormalizationCollector: moved bad={0}, dup={1}; deleted bad={2}, dup={3}",
+                result.BadMoved, result.DupMoved, result.BadDeleted, result.DupDeleted);
             return result;
+        }
+
+        /// <summary>
+        /// Удалить файл книги. Архив, в котором больше одной книги, не трогаем:
+        /// вместе с проблемной книгой пропали бы и остальные.
+        /// </summary>
+        private static bool DeleteSafely(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return false;
+                if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    int books = 0;
+                    try
+                    {
+                        using (var zip = System.IO.Compression.ZipFile.OpenRead(path))
+                            foreach (var entry in zip.Entries)
+                            {
+                                string ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                                if (ext == ".fb2" || ext == ".epub") books++;
+                            }
+                    }
+                    catch (InvalidDataException) { } // unreadable archive: nothing else to lose
+                    if (books > 1)
+                    {
+                        Log.WriteLine(LogLevel.Warning,
+                            "NormalizationCollector: \"{0}\" holds {1} books, not deleted", path, books);
+                        return false;
+                    }
+                }
+                File.Delete(path);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.WriteLine(LogLevel.Error, "NormalizationCollector: cannot delete \"{0}\": {1}", path, ex.Message);
+                return false;
+            }
         }
 
         /// <summary>Выделить физический путь: "path.zip@entry" -> "path.zip"; иначе сам путь.</summary>
@@ -116,6 +162,8 @@ namespace TinyOPDS
         {
             public int BadMoved;
             public int DupMoved;
+            public int BadDeleted;
+            public int DupDeleted;
         }
     }
 }

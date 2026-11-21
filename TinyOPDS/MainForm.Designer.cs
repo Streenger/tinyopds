@@ -1275,7 +1275,7 @@ namespace TinyOPDS
             this.keepOriginals.Name = "keepOriginals";
             this.keepOriginals.Size = new System.Drawing.Size(576, 41);
             this.keepOriginals.TabIndex = 50;
-            this.keepOriginals.Text = "Save originals of repaired books";
+            this.keepOriginals.Text = "Keep originals of repaired books in libmeta";
             this.keepOriginals.UseVisualStyleBackColor = true;
             this.keepOriginals.CheckedChanged += new System.EventHandler(this.KeepOriginals_CheckedChanged);
             // 
@@ -1286,7 +1286,7 @@ namespace TinyOPDS
             this.moveBadBooks.Name = "moveBadBooks";
             this.moveBadBooks.Size = new System.Drawing.Size(576, 41);
             this.moveBadBooks.TabIndex = 51;
-            this.moveBadBooks.Text = "Save bad books";
+            this.moveBadBooks.Text = "Keep bad books in libmeta (otherwise delete)";
             this.moveBadBooks.UseVisualStyleBackColor = true;
             this.moveBadBooks.CheckedChanged += new System.EventHandler(this.MoveBadBooks_CheckedChanged);
             // 
@@ -1297,7 +1297,7 @@ namespace TinyOPDS
             this.moveDuplicates.Name = "moveDuplicates";
             this.moveDuplicates.Size = new System.Drawing.Size(576, 41);
             this.moveDuplicates.TabIndex = 52;
-            this.moveDuplicates.Text = "Save duplicate books";
+            this.moveDuplicates.Text = "Keep duplicates in libmeta (otherwise delete)";
             this.moveDuplicates.UseVisualStyleBackColor = true;
             this.moveDuplicates.CheckedChanged += new System.EventHandler(this.MoveDuplicates_CheckedChanged);
             // 
