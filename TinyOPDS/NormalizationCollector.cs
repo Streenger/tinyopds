@@ -125,7 +125,7 @@ namespace TinyOPDS
                     if (books > 1)
                     {
                         Log.WriteLine(LogLevel.Warning,
-                            "NormalizationCollector: \"{0}\" holds {1} books, not deleted", path, books);
+                            "NormalizationCollector: \"{0}\" holds {1} books, left in place for the normalizer (next scan)", path, books);
                         return false;
                     }
                 }
