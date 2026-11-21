@@ -458,16 +458,23 @@ namespace TinyOPDS.Data
         {
             int version = Convert.ToInt32(ExecuteScalar("PRAGMA user_version") ?? 0);
 
-            if (version < 1)
+            if (version < 2)
             {
-                // Older versions saved books with INSERT OR REPLACE, which left orphaned BooksFTS rows
-                // (duplicate search hits, matches by outdated titles), so rebuild the books index
+                // 1: older versions saved books with INSERT OR REPLACE, which left orphaned BooksFTS rows
+                // (duplicate search hits, matches by outdated titles).
+                // 2: index rows move under the rowid of their book, and the triggers go by rowid
+                // instead of scanning the whole index. Both: rebuild the books index and its triggers
                 Log.WriteLine("Rebuilding books full-text index...");
                 IDbTransaction tx = BeginTransactionWithObject();
                 try
                 {
+                    foreach (string trigger in new[] { "books_ai", "books_au", "books_ad" })
+                        ExecuteNonQueryInTransaction("DROP TRIGGER IF EXISTS " + trigger, tx);
                     ExecuteNonQueryInTransaction(DatabaseSchema.DeleteAllBooksFTS, tx);
-                    ExecuteNonQueryInTransaction("INSERT INTO BooksFTS(BookID, Title) SELECT ID, Title FROM Books", tx);
+                    ExecuteNonQueryInTransaction(DatabaseSchema.RebuildBooksFTSByRowid, tx);
+                    ExecuteNonQueryInTransaction(DatabaseSchema.CreateBookInsertTrigger, tx);
+                    ExecuteNonQueryInTransaction(DatabaseSchema.CreateBookUpdateTrigger, tx);
+                    ExecuteNonQueryInTransaction(DatabaseSchema.CreateBookDeleteTrigger, tx);
                     tx.Commit();
                 }
                 catch
@@ -479,7 +486,7 @@ namespace TinyOPDS.Data
                 {
                     tx.Dispose();
                 }
-                ExecuteNonQuery("PRAGMA user_version = 1");
+                ExecuteNonQuery("PRAGMA user_version = 2");
                 Log.WriteLine("Books full-text index rebuilt");
             }
         }

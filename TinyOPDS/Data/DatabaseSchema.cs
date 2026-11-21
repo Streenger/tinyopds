@@ -269,23 +269,29 @@ namespace TinyOPDS.Data
 
         #region Triggers for FTS Synchronization
 
-        // Books triggers - FIXED: Removed Annotation from FTS operations
+        // Books triggers - FIXED: Removed Annotation from FTS operations.
+        // BooksFTS.BookID is UNINDEXED, so a lookup by it reads the whole index (about 0.2 s at 500k books).
+        // Index rows therefore live under the rowid of their Books row, and the triggers go by rowid.
+        // OR REPLACE: a stale row left under a reused rowid (INSERT OR REPLACE skips the delete trigger)
+        // must not block the new book
         public const string CreateBookInsertTrigger = @"
             CREATE TRIGGER IF NOT EXISTS books_ai AFTER INSERT ON Books BEGIN
-                INSERT INTO BooksFTS(BookID, Title) 
-                VALUES (new.ID, new.Title);
+                INSERT OR REPLACE INTO BooksFTS(rowid, BookID, Title) 
+                VALUES (new.rowid, new.ID, new.Title);
             END";
 
+        // Only a changed title or ID touches the index: re-saving a moved file must not
         public const string CreateBookUpdateTrigger = @"
-            CREATE TRIGGER IF NOT EXISTS books_au AFTER UPDATE ON Books BEGIN
+            CREATE TRIGGER IF NOT EXISTS books_au AFTER UPDATE OF ID, Title ON Books
+            WHEN old.ID IS NOT new.ID OR old.Title IS NOT new.Title BEGIN
                 UPDATE BooksFTS 
-                SET Title = new.Title
-                WHERE BookID = new.ID;
+                SET BookID = new.ID, Title = new.Title
+                WHERE rowid = new.rowid;
             END";
 
         public const string CreateBookDeleteTrigger = @"
             CREATE TRIGGER IF NOT EXISTS books_ad AFTER DELETE ON Books BEGIN
-                DELETE FROM BooksFTS WHERE BookID = old.ID;
+                DELETE FROM BooksFTS WHERE rowid = old.rowid;
             END";
 
         // Authors triggers
@@ -906,6 +912,9 @@ namespace TinyOPDS.Data
         #region FTS5 Maintenance
 
         public const string RebuildBooksFTS = @"INSERT INTO BooksFTS(BooksFTS) VALUES('rebuild')";
+
+        // Fills the index from scratch, each row under the rowid of its book (see books_ai)
+        public const string RebuildBooksFTSByRowid = @"INSERT INTO BooksFTS(rowid, BookID, Title) SELECT rowid, ID, Title FROM Books";
 
         public const string OptimizeBooksFTS = @"INSERT INTO BooksFTS(BooksFTS) VALUES('optimize')";
 
